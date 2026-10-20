@@ -1,0 +1,436 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Pulsar HTTPS prototype - private S3 assets served by Lambda and an API Gateway ad serving and analytics API
+
+Metadata:
+  AWSToolsMetrics:
+    AWSAgentToolkit: aws-cloudformation@3
+
+Parameters:
+  DeploymentPermissionsBoundary:
+    Type: String
+    Default: ''
+    Description: Optional IAM managed policy ARN constraining SAM-generated Lambda execution roles
+    AllowedPattern: '^$|^arn:[a-z0-9-]+:iam::[0-9]{12}:policy/.+$'
+  BudgetEmail:
+    Type: String
+    Description: Email address for actual-spend warnings; budgets do not impose a hard spending cap
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+
+Conditions:
+  HasDeploymentPermissionsBoundary: !Not [!Equals [!Ref DeploymentPermissionsBoundary, '']]
+
+Globals:
+  Function:
+    Runtime: nodejs24.x
+    MemorySize: 256
+    Timeout: 10
+    PermissionsBoundary: !If
+      - HasDeploymentPermissionsBoundary
+      - !Ref DeploymentPermissionsBoundary
+      - !Ref AWS::NoValue
+    Environment:
+      Variables:
+        TABLE_NAME: !Ref AdPlatform
+
+Resources:
+  AdPlatform:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Disposable showcase state; on-demand billing avoids idle provisioned capacity.
+        must:
+          - Stack deletion and replacement intentionally delete demo data.
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefaultRouteSettings:
+        ThrottlingRateLimit: 5
+        ThrottlingBurstLimit: 20
+      CorsConfiguration:
+        AllowOrigins:
+          - http://127.0.0.1:5173
+        AllowMethods: [GET, POST, OPTIONS]
+        AllowHeaders: [Content-Type]
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Public prototype API; origin restriction and modest throttling limit browser access and bursts, not authorization.
+        must:
+          - Same-origin site traffic needs no CORS grant; allow only the local demo cross-origin.
+
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Disposable static build artifacts; SSE-S3 avoids a paid customer-managed key and version history is unnecessary.
+        must:
+          - Keep private; serve objects only through the website Lambda.
+          - Empty the bucket before stack deletion or replacement; CloudFormation does not delete its objects.
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+
+  SiteBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Private assets are read by the website execution role; deny all non-TLS storage access.
+        must:
+          - Deny non-TLS requests for both bucket and objects.
+    Properties:
+      Bucket: !Ref SiteBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: DenyInsecureTransport
+            Effect: Deny
+            Principal: '*'
+            Action: s3:*
+            Resource:
+              - !GetAtt SiteBucket.Arn
+              - !Sub '${SiteBucket.Arn}/*'
+            Condition:
+              Bool:
+                aws:SecureTransport: 'false'
+
+  SiteLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-site'
+      RetentionInDays: 7
+
+  SiteFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: SiteLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-site'
+      CodeUri: .
+      Handler: site.handler
+      Environment:
+        Variables:
+          SITE_BUCKET: !Ref SiteBucket
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub '${SiteBucket.Arn}/*'
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt SiteBucket.Arn
+      Events:
+        Index:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /
+            Method: GET
+        Assets:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: GET
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: HTTPS static hosting without CloudFront, which this account cannot create until AWS verification.
+        must:
+          - Read only the private site bucket; never return index.html for missing assets.
+          - Specific ad and stats routes take precedence over the static asset route.
+      BuildMethod: esbuild
+      BuildProperties:
+        Target: es2022
+        Format: cjs
+        OutExtension: ['.js=.cjs']
+        Minify: true
+        EntryPoints: [src/handlers/site.ts]
+
+  GetAdLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-get-ad'
+      RetentionInDays: 7
+
+  PostEventsLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-post-events'
+      RetentionInDays: 7
+
+  GetStatsLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-get-stats'
+      RetentionInDays: 7
+
+  GetAdFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: GetAdLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-get-ad'
+      CodeUri: .
+      Handler: getAd.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+                - dynamodb:Query
+                - dynamodb:UpdateItem
+              Resource: !GetAtt AdPlatform.Arn
+      Events:
+        GetAd:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /ad
+            Method: GET
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Serves and accounts for ads; precreated log group bounds diagnostics retention.
+        must:
+          - Function name must match its log group suffix.
+      BuildMethod: esbuild
+      BuildProperties:
+        Target: es2022
+        Format: cjs
+        OutExtension: ['.js=.cjs']
+        Minify: true
+        EntryPoints: [src/handlers/getAd.ts]
+
+  PostEventsFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: PostEventsLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-post-events'
+      CodeUri: .
+      Handler: postEvents.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:UpdateItem
+              Resource: !GetAtt AdPlatform.Arn
+      Events:
+        PostEvents:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /events
+            Method: POST
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Records real client events; precreated log group bounds diagnostics retention.
+        must:
+          - Function name must match its log group suffix.
+      BuildMethod: esbuild
+      BuildProperties:
+        Target: es2022
+        Format: cjs
+        OutExtension: ['.js=.cjs']
+        Minify: true
+        EntryPoints: [src/handlers/postEvents.ts]
+
+  GetStatsFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: GetStatsLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-get-stats'
+      CodeUri: .
+      Handler: getStats.handler
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: dynamodb:Query
+              Resource: !GetAtt AdPlatform.Arn
+      Events:
+        GetStats:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /stats
+            Method: GET
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Reads recorded analytics; precreated log group bounds diagnostics retention.
+        must:
+          - Function name must match its log group suffix.
+      BuildMethod: esbuild
+      BuildProperties:
+        Target: es2022
+        Format: cjs
+        OutExtension: ['.js=.cjs']
+        Minify: true
+        EntryPoints: [src/handlers/getStats.ts]
+
+  BudgetTopic:
+    Type: AWS::SNS::Topic
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Non-sensitive budget threshold notifications; no customer-managed KMS key monthly charge.
+        must:
+          - Only this account's named budget may publish.
+    Properties:
+      TopicName: !Sub '${AWS::StackName}-budget'
+
+  BudgetTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics: [!Ref BudgetTopic]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref BudgetTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnEquals:
+                aws:SourceArn: !Sub 'arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/${AWS::StackName}-monthly'
+
+  CostGuardLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-cost-guard'
+      RetentionInDays: 7
+
+  CostGuardFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: CostGuardLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-cost-guard'
+      CodeUri: .
+      Handler: costGuard.handler
+      Timeout: 30
+      Environment:
+        Variables:
+          BUDGET_TOPIC_ARN: !Ref BudgetTopic
+          SHOWCASE_FUNCTION_NAMES: !Join [',', [!Ref GetAdFunction, !Ref PostEventsFunction, !Ref GetStatsFunction, !Ref SiteFunction]]
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: lambda:PutFunctionConcurrency
+              Resource:
+                - !GetAtt GetAdFunction.Arn
+                - !GetAtt PostEventsFunction.Arn
+                - !GetAtt GetStatsFunction.Arn
+                - !GetAtt SiteFunction.Arn
+      Events:
+        Budget:
+          Type: SNS
+          Properties:
+            Topic: !Ref BudgetTopic
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: 'Best-effort spending brake: stop both API and static-site Lambda execution.'
+        must:
+          - Billing is delayed; this cannot guarantee a dollar cap or stop all residual charges.
+          - Recovery is manual after reviewing costs; never automatically re-enable each month.
+      BuildMethod: esbuild
+      BuildProperties:
+        Target: es2022
+        Format: cjs
+        OutExtension: ['.js=.cjs']
+        Minify: true
+        EntryPoints: [src/handlers/costGuard.ts]
+
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    DependsOn: BudgetTopicPolicy
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Account-wide gross monthly cost warning at USD 5; shutdown starts at USD 4 for margin.
+        must:
+          - Exclude credits and refunds so promotional credits do not mask usage.
+          - Not a hard spending cap; AWS billing data and shutdown propagation are delayed.
+    Properties:
+      Budget:
+        BudgetName: !Sub '${AWS::StackName}-monthly'
+        BudgetLimit:
+          Amount: 5
+          Unit: USD
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        CostTypes:
+          IncludeCredit: false
+          IncludeRefund: false
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            ThresholdType: PERCENTAGE
+            Threshold: 80
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetTopic
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            ThresholdType: PERCENTAGE
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetTopic
+            - SubscriptionType: EMAIL
+              Address: !Ref BudgetEmail
+
+Outputs:
+  ApiUrl:
+    Description: HTTP API base URL
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  TableName:
+    Description: DynamoDB table for the seed script
+    Value: !Ref AdPlatform
+  SiteBucketName:
+    Description: Private S3 bucket for the built frontend and original creative assets
+    Value: !Ref SiteBucket
+  SiteUrl:
+    Description: Public HTTPS showcase URL
+    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  BudgetName:
+    Description: Account-wide monthly spending budget with delayed, best-effort shutdown
+    Value: !Ref MonthlyBudget
+  CostGuardFunctionName:
+    Description: Shutdown handler subscribed to the budget topic
+    Value: !Ref CostGuardFunction

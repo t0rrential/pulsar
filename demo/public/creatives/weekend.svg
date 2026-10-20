@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="250" viewBox="0 0 300 250" role="img" aria-labelledby="title desc">
+  <title id="title">Take the scenic route</title>
+  <desc id="desc">An original forest-green travel poster with a winding cream trail through layered hills.</desc>
+  <rect width="300" height="250" fill="#243f31"/>
+  <circle cx="249" cy="40" r="21" fill="#d9ba78"/>
+  <circle cx="249" cy="40" r="30" fill="none" stroke="#6d8058"/>
+  <g fill="#f6f1df" font-family="sans-serif">
+    <text x="22" y="29" font-size="9" font-weight="700" letter-spacing="2">WEEKEND ESCAPES</text>
+    <text x="21" y="66" font-size="30" font-weight="700" letter-spacing="-1">Take the</text>
+    <text x="21" y="98" font-size="30" font-weight="700" letter-spacing="-1">scenic route.</text>
+    <text x="22" y="120" font-size="10" letter-spacing=".5">A little farther from the everyday.</text>
+  </g>
+  <path d="M0 167c45-49 86-43 126-10 42 36 99-47 174-20v113H0Z" fill="#587351"/>
+  <path d="M0 183c64-9 100 41 162 4 51-29 98-29 138-8v71H0Z" fill="#8d9e6c"/>
+  <path d="M0 233c52-35 125-39 172-12 47 27 93-8 128-12v41H0Z" fill="#3b5c40"/>
+  <path d="M179 250c-65-35-65-50-14-65 53-15 52-24 29-34 40 8 43 21-9 40-35 13-26 22 58 59Z" fill="#e2c994"/>
+  <g fill="#2f4e35">
+    <path d="m44 145-15 28h9l-18 29h20v18h7v-18h20l-18-29h9Z"/>
+    <path d="m274 120-11 23h7l-14 24h15v16h6v-16h15l-14-24h7Z"/>
+  </g>
+  <rect x="21" y="204" width="108" height="29" rx="14.5" fill="#f6f1df"/>
+  <text x="35" y="223" fill="#243f31" font-family="sans-serif" font-size="11" font-weight="700">Find your trail</text>
+  <path d="M111 215h7m-3-3 3 3-3 3" fill="none" stroke="#243f31" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="728" height="90" viewBox="0 0 728 90" role="img" aria-labelledby="title desc">
+  <title id="title">A new view is closer than you think</title>
+  <desc id="desc">An original twilight campsite with a cream canvas tent, pine trees, and a rising moon.</desc>
+  <rect width="728" height="90" fill="#294634"/>
+  <circle cx="530" cy="27" r="17" fill="#dfc484"/>
+  <path d="M448 85c40-48 62-30 94-37 38-8 55-2 88 20 32 22 58-16 98-9v31H448Z" fill="#4c6b4a"/>
+  <path d="M447 90c54-18 101-8 141-12 51-6 90-9 140 2v10Z" fill="#789063"/>
+  <path d="m589 30-47 54h91Z" fill="#e5d6ad"/>
+  <path d="m589 30 44 54h39l-44-54Z" fill="#baaa7c"/>
+  <path d="m589 46-27 38h49Z" fill="#304c38"/>
+  <path d="m589 46 3 38h19Z" fill="#64764f"/>
+  <g fill="#1d382a">
+    <path d="m697 14-13 23h8l-16 24h15l-16 18h19v11h6V79h19l-16-18h15l-16-24h8Z"/>
+    <path d="m486 39-9 17h5l-11 19h12v15h6V75h12l-11-19h5Z"/>
+  </g>
+  <g fill="#eee6ce">
+    <circle cx="572" cy="14" r="1"/><circle cx="648" cy="17" r="1.2"/><circle cx="675" cy="33" r="1"/><circle cx="499" cy="14" r="1"/>
+  </g>
+  <g fill="#f4f0df" font-family="sans-serif">
+    <text x="22" y="21" font-size="8" font-weight="700" letter-spacing="1.7">FIND YOUR NEXT ADVENTURE</text>
+    <text x="21" y="48" font-size="25" font-weight="700" letter-spacing="-.7">A new view. A fresh start.</text>
+    <text x="22" y="70" font-size="11" fill="#d6dfc8">Your next great night out starts under the stars.</text>
+  </g>
+  <rect x="350" y="28" width="113" height="34" rx="17" fill="#e5d6ad"/>
+  <text x="366" y="49" fill="#294634" font-family="sans-serif" font-size="11" font-weight="700">Go camping</text>
+  <path d="M446 44h7m-3-3 3 3-3 3" fill="none" stroke="#294634" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

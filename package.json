@@ -1,0 +1,34 @@
+{
+  "name": "pulsar-ad-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": ["backend", "packages/*", "demo"],
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build": "npm run build --workspace=@pulsar/react-ads && npm run build --workspace=@pulsar/demo",
+    "build:backend": "sam build --template-file backend/template.yaml",
+    "typecheck": "npm run build --workspace=@pulsar/react-ads && tsc --noEmit",
+    "dev": "npm run build --workspace=@pulsar/react-ads && concurrently -k -n api,web \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:api": "tsx scripts/local.ts",
+    "dev:web": "npm run dev --workspace=@pulsar/demo",
+    "seed": "tsx scripts/seed.ts",
+    "showcase:deploy": "tsx scripts/deploy-showcase.ts",
+    "showcase:delete": "tsx scripts/delete-showcase.ts"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.0.0",
+    "@aws-sdk/lib-dynamodb": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/aws-lambda": "^8.10.0",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "concurrently": "^9.0.0",
+    "dynalite": "^4.0.0",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.0",
+    "typescript": "^5.9.0"
+  }
+}

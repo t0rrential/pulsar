@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="300" height="250" viewBox="0 0 300 250" role="img" aria-labelledby="title desc">
+  <title id="title">Make a little room for the outdoors</title>
+  <desc id="desc">An original botanical illustration of leafy branches, sunshine, and a quiet park bench.</desc>
+  <rect width="300" height="250" fill="#e4ead8"/>
+  <circle cx="244" cy="164" r="61" fill="#e6cb87"/>
+  <path d="M0 212c75-27 130 18 190-6 47-19 82-17 110-2v46H0Z" fill="#becba9"/>
+  <path d="M135 250c41-27 72-27 111-26 21 0 41-4 54-10v36Z" fill="#f4f0df"/>
+  <g fill="#2e5038" font-family="sans-serif">
+    <text x="22" y="28" font-size="9" font-weight="700" letter-spacing="2">OUTSIDE EVERY DAY</text>
+    <text x="21" y="64" font-size="29" font-weight="700" letter-spacing="-1">A little fresh air.</text>
+    <text x="21" y="95" font-size="29" font-weight="700" letter-spacing="-1">A better day.</text>
+    <text x="22" y="118" font-size="10">Make room for the world outside.</text>
+  </g>
+  <g fill="none" stroke="#4f7149" stroke-width="3" stroke-linecap="round">
+    <path d="M20 249c13-42 29-66 47-101M40 205l-24-25m37 3 30-13"/>
+  </g>
+  <g fill="#6d8a59">
+    <path d="M58 167c-10-22-4-29 17-32 1 16-4 27-17 32Z"/>
+    <path d="M43 194c-24-1-31-12-29-26 20 2 30 10 29 26Z"/>
+    <path d="M49 192c3-22 17-29 36-25-6 19-18 27-36 25Z"/>
+    <path d="M29 221c-19 1-27-6-29-20 18-2 27 5 29 20Z"/>
+    <path d="M32 222c8-20 20-24 38-18-10 17-23 22-38 18Z"/>
+  </g>
+  <g stroke="#3d5c3e" stroke-width="4" stroke-linecap="round">
+    <path d="M173 174h70m-70 9h70m-77 13h84m-75-21v45m66-45v45"/>
+  </g>
+  <path d="M253 130c5-5 9-5 14 0 5-5 9-5 14 0" fill="none" stroke="#6d8058" stroke-width="1.5" stroke-linecap="round"/>
+  <rect x="21" y="139" width="112" height="29" rx="14.5" fill="#2e5038"/>
+  <text x="35" y="158" fill="#f4f0df" font-family="sans-serif" font-size="11" font-weight="700">Get inspired</text>
+  <path d="M114 150h8m-3-3 3 3-3 3" fill="none" stroke="#f4f0df" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
