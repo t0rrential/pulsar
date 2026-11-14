@@ -1,35 +1,86 @@
 import http from 'node:http';
-import dynalite from 'dynalite';
-import { CreateTableCommand, DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { spawn, spawnSync } from 'node:child_process';
+import { setTimeout as delay } from 'node:timers/promises';
+import { CreateTableCommand, DynamoDBClient, ListTablesCommand } from '@aws-sdk/client-dynamodb';
+import { CreateBucketCommand, GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 
 const apiPort = Number(process.env.API_PORT || 3001);
 const databasePort = Number(process.env.DB_PORT || 8000);
-if (![apiPort, databasePort].every((port) => Number.isInteger(port) && port > 0 && port <= 65535)) {
-  throw new Error('API_PORT and DB_PORT must be integers between 1 and 65535.');
+const storagePort = Number(process.env.STORAGE_PORT || 9000);
+if (![apiPort, databasePort, storagePort].every((port) => Number.isInteger(port) && port > 0 && port <= 65535)) {
+  throw new Error('API_PORT, DB_PORT and STORAGE_PORT must be integers between 1 and 65535.');
 }
 
 // This runner always uses a local database, never an authenticated AWS table.
 process.env.DYNAMODB_ENDPOINT = `http://127.0.0.1:${databasePort}`;
 process.env.TABLE_NAME = 'PulsarLocal';
 process.env.AWS_REGION ||= 'us-east-1';
+process.env.ADMIN_KEY ||= 'local-admin';
+process.env.SITE_BUCKET = 'pulsar-local';
+process.env.S3_ENDPOINT = `http://localhost:${storagePort}`;
+process.env.S3_FORCE_PATH_STYLE = 'true';
+process.env.AWS_ACCESS_KEY_ID = 'pulsarlocal';
+process.env.AWS_SECRET_ACCESS_KEY = 'pulsarlocal-secret';
 
-const database = dynalite({ createTableMs: 0 });
-await new Promise<void>((resolve, reject) => {
-  database.once('error', reject);
-  database.listen(databasePort, '127.0.0.1', () => {
-    database.removeListener('error', reject);
-    resolve();
-  });
-});
+const containerName = `pulsar-local-${process.pid}`;
+const database = spawn('docker', [
+  'run', '--rm', '--name', containerName, '-p', `127.0.0.1:${databasePort}:8000`,
+  'amazon/dynamodb-local:latest', '-jar', 'DynamoDBLocal.jar', '-inMemory', '-sharedDb',
+], { stdio: ['ignore', 'ignore', 'inherit'] });
+let databaseError: Error | undefined;
+database.on('error', (error) => { databaseError = error; });
+database.on('exit', (code) => { databaseError = new Error(`DynamoDB Local exited (${code}).`); });
+const storageName = `pulsar-storage-${process.pid}`;
+const storage = spawn('docker', [
+  'run', '--rm', '--name', storageName, '-p', `127.0.0.1:${storagePort}:9090`,
+  'adobe/s3mock:latest',
+], { stdio: ['ignore', 'ignore', 'inherit'] });
+let storageError: Error | undefined;
+storage.on('error', (error) => { storageError = error; });
+storage.on('exit', (code) => { storageError = new Error(`Local object storage exited (${code}).`); });
+
+function stopDatabase() {
+  spawnSync('docker', ['stop', storageName], { stdio: 'ignore' });
+  storage.kill();
+  spawnSync('docker', ['stop', containerName], { stdio: 'ignore' });
+  database.kill();
+}
 
 const client = new DynamoDBClient({
   endpoint: process.env.DYNAMODB_ENDPOINT,
   region: process.env.AWS_REGION,
   credentials: { accessKeyId: 'local', secretAccessKey: 'local' },
 });
+const s3 = new S3Client({
+  endpoint: process.env.S3_ENDPOINT,
+  region: process.env.AWS_REGION,
+  forcePathStyle: true,
+  credentials: { accessKeyId: 'pulsarlocal', secretAccessKey: 'pulsarlocal-secret' },
+});
 
 try {
+  const deadline = Date.now() + 60_000;
+  while (true) {
+    if (databaseError) throw databaseError;
+    try {
+      await client.send(new ListTablesCommand({ Limit: 1 }));
+      break;
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await delay(250);
+    }
+  }
+  while (true) {
+    if (storageError) throw storageError;
+    try {
+      await s3.send(new CreateBucketCommand({ Bucket: process.env.SITE_BUCKET }));
+      break;
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await delay(250);
+    }
+  }
   await client.send(new CreateTableCommand({
     TableName: process.env.TABLE_NAME,
     BillingMode: 'PAY_PER_REQUEST',
@@ -37,25 +88,33 @@ try {
     KeySchema: [{ AttributeName: 'PK', KeyType: 'HASH' }, { AttributeName: 'SK', KeyType: 'RANGE' }],
   }));
 
-  const [{ handler: getAd }, { handler: postEvents }, { handler: getStats }, { seed }] = await Promise.all([
+  const [{ handler: getAd }, { handler: postEvents }, { handler: getStats }, { handler: admin }, { seed }] = await Promise.all([
     import('../backend/src/handlers/getAd.ts'),
     import('../backend/src/handlers/postEvents.ts'),
     import('../backend/src/handlers/getStats.ts'),
+    import('../backend/src/handlers/admin.ts'),
     import('./seed.ts'),
   ]);
   await seed();
 
   const routes = { 'GET /ad': getAd, 'POST /events': postEvents, 'GET /stats': getStats };
   const api = http.createServer(async (request, response) => {
-    response.setHeader('Access-Control-Allow-Origin', '*');
-    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    response.setHeader('Access-Control-Allow-Headers', 'content-type');
+    if (request.headers.origin === 'http://127.0.0.1:5173') response.setHeader('Access-Control-Allow-Origin', request.headers.origin);
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
+    response.setHeader('Access-Control-Allow-Headers', 'content-type, x-admin-key');
     response.setHeader('Cache-Control', 'no-store');
     if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
     try {
       const url = new URL(request.url || '/', `http://127.0.0.1:${apiPort}`);
+      if (request.method === 'GET' && /^\/uploads\/[a-zA-Z0-9.-]+$/.test(url.pathname)) {
+        const object = await s3.send(new GetObjectCommand({ Bucket: process.env.SITE_BUCKET, Key: url.pathname.slice(1) }));
+        response.setHeader('Content-Type', object.ContentType || 'application/octet-stream');
+        response.end(Buffer.from(await object.Body!.transformToByteArray()));
+        return;
+      }
       const routeKey = `${request.method} ${url.pathname}`;
-      const handler = routes[routeKey as keyof typeof routes];
+      const handler = routes[routeKey as keyof typeof routes] ??
+        (/^\/campaigns(?:\/[^/]+(?:\/creatives)?)?$/.test(url.pathname) || url.pathname === '/uploads' ? admin : undefined);
       if (!handler) { response.writeHead(404, { 'content-type': 'application/json' }); response.end(JSON.stringify({ error: 'Not found' })); return; }
       const chunks: Buffer[] = [];
       let length = 0;
@@ -75,7 +134,7 @@ try {
         body: length ? Buffer.concat(chunks).toString('utf8') : undefined,
         isBase64Encoded: false,
         requestContext: {
-          accountId: 'local', apiId: 'local', domainName: 'localhost', domainPrefix: 'localhost',
+          accountId: 'local', apiId: 'local', domainName: `localhost:${apiPort}`, domainPrefix: 'localhost',
           http: { method: request.method || 'GET', path: url.pathname, protocol: 'HTTP/1.1', sourceIp: '127.0.0.1', userAgent: headers['user-agent'] || '' },
           requestId: crypto.randomUUID(), routeKey, stage: '$default', time: new Date().toISOString(), timeEpoch: Date.now(),
         },
@@ -100,13 +159,15 @@ try {
   const stop = () => {
     api.close();
     api.closeAllConnections();
-    database.close();
+    stopDatabase();
     client.destroy();
+    s3.destroy();
   };
   process.once('SIGINT', stop);
   process.once('SIGTERM', stop);
 } catch (error) {
-  database.close();
+  stopDatabase();
   client.destroy();
+  s3.destroy();
   throw error;
 }

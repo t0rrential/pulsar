@@ -3,8 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "workspaces": ["backend", "packages/*", "demo"],
-  "engines": { "node": ">=22" },
+  "workspaces": [
+    "backend",
+    "packages/*",
+    "demo"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "npm run build --workspace=@pulsar/react-ads && npm run build --workspace=@pulsar/demo",
     "build:backend": "sam build --template-file backend/template.yaml",
@@ -26,7 +32,6 @@
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "concurrently": "^9.0.0",
-    "dynalite": "^4.0.0",
     "esbuild": "^0.25.0",
     "tsx": "^4.20.0",
     "typescript": "^5.9.0"

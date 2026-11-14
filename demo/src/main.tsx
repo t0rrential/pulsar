@@ -1,6 +1,7 @@
 import { StrictMode, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { AdProvider, AdSlot, AdStats } from '@pulsar/react-ads';
+import Admin from './Admin';
 import './style.css';
 
 const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
@@ -11,13 +12,13 @@ const campaigns = [
 ];
 
 function App() {
-  const [view, setView] = useState<'publisher' | 'stats'>(window.location.hash === '#stats' ? 'stats' : 'publisher');
+  const [view, setView] = useState<'publisher' | 'stats' | 'admin'>(window.location.hash === '#admin' ? 'admin' : window.location.hash === '#stats' ? 'stats' : 'publisher');
   const [adGeneration, setAdGeneration] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
   const [campaignId, setCampaignId] = useState('c1');
   const selectedCampaign = campaigns.find((campaign) => campaign.id === campaignId)!;
 
-  function navigate(next: 'publisher' | 'stats') {
+  function navigate(next: 'publisher' | 'stats' | 'admin') {
     window.history.replaceState(null, '', `#${next}`);
     setView(next);
     if (next === 'stats') setRefreshKey((key) => key + 1);
@@ -33,9 +34,11 @@ function App() {
           <nav aria-label="Demo views">
             <button className={view === 'publisher' ? 'active' : ''} onClick={() => navigate('publisher')}>Publisher</button>
             <button className={view === 'stats' ? 'active' : ''} onClick={() => navigate('stats')}>Campaign stats</button>
+            <button className={view === 'admin' ? 'active' : ''} onClick={() => navigate('admin')}>Admin</button>
           </nav>
         </header>
         <main>
+          {view === 'admin' ? <Admin apiUrl={apiUrl} /> : <>
           <div className="eyebrow">{view === 'publisher' ? 'AD PLATFORM / PHASE 01' : 'PULSAR ANALYTICS / CAMPAIGNS'}</div>
           <section className="intro">
             <div>
@@ -86,7 +89,7 @@ function App() {
               </section>
               <AdStats campaignId={campaignId} days={7} refreshKey={refreshKey} />
             </div>
-          )}
+          )}</>}
         </main>
         <footer><span>Pulsar · Prototype, not production analytics</span><span className="api-address">API <code>{apiUrl}</code></span></footer>
       </div>
