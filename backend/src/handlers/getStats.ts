@@ -18,7 +18,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   const byDate = new Map<string, DailyStats>();
   for (let offset = count - 1; offset >= 0; offset--) {
     const date = new Date(today.getTime() - offset * 86_400_000).toISOString().slice(0, 10);
-    const row: DailyStats = { date, requests: 0, impressions: 0, clicks: 0 };
+    const row: DailyStats = { date, requests: 0, impressions: 0, clicks: 0, viewable: 0, conversions: 0 };
     days.push(row);
     byDate.set(date, row);
   }
@@ -43,6 +43,8 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       row.requests = typeof item.requests === 'number' ? item.requests : 0;
       row.impressions = typeof item.impressions === 'number' ? item.impressions : 0;
       row.clicks = typeof item.clicks === 'number' ? item.clicks : 0;
+      row.viewable = typeof item.viewable === 'number' ? item.viewable : 0;
+      row.conversions = typeof item.conversions === 'number' ? item.conversions : 0;
     }
     queryKey = page.LastEvaluatedKey;
   } while (queryKey);
