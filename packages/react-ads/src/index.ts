@@ -1,4 +1,4 @@
-export { AdProvider } from "./AdProvider";
+export { AdProvider, useAdEvents } from "./AdProvider";
 export { AdSlot } from "./AdSlot";
 export { AdStats } from "./AdStats";
 export type { AdProviderProps } from "./AdProvider";

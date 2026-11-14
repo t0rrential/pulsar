@@ -11,7 +11,7 @@ export interface Ad {
 
 export interface AdEvent {
   eventId: string;
-  type: "impression" | "click";
+  type: "impression" | "click" | "viewable" | "conversion";
   impressionId: string;
   campaignId: string;
   creativeId: string;
@@ -23,6 +23,8 @@ export interface DailyStats {
   date: string;
   requests: number;
   impressions: number;
+  viewable?: number;
+  conversions?: number;
   clicks: number;
 }
 

@@ -3,7 +3,7 @@
 import { StrictMode } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AdProvider, AdSlot, AdStats } from "../src/index";
+import { AdProvider, AdSlot, AdStats, useAdEvents } from "../src/index";
 import type { Ad, AdEvent } from "../src/index";
 
 const firstAd: Ad = {
@@ -52,6 +52,12 @@ function sentEvents(): AdEvent[] {
   });
 }
 
+function flushEvents() {
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+  fireEvent(document, new Event("visibilitychange"));
+  Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
+}
+
 beforeEach(() => {
   fetchMock.mockReset();
   beaconMock.mockReset().mockReturnValue(true);
@@ -89,6 +95,7 @@ describe("AdSlot", () => {
     await act(async () => response.resolve(jsonResponse(firstAd)));
 
     await screen.findByRole("link", { name: "A useful product" });
+    flushEvents();
     expect(sentEvents().map((event) => event.type)).toEqual(["impression"]);
   });
 
@@ -118,6 +125,7 @@ describe("AdSlot", () => {
     await screen.findByRole("link", { name: "Another useful product" });
     await act(async () => oldResponse.resolve(jsonResponse(firstAd)));
 
+    flushEvents();
     expect(screen.queryByRole("link", { name: "A useful product" })).toBeNull();
     expect(sentEvents()).toEqual([
       expect.objectContaining({ type: "impression", impressionId: "i2", placement: "banner" }),
@@ -133,6 +141,7 @@ describe("AdSlot", () => {
     first.unmount();
     render(<AdProvider apiUrl="https://ads.example"><AdSlot placement="sidebar" /></AdProvider>);
     await screen.findByRole("link", { name: "Another useful product" });
+    flushEvents();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(sentEvents().map((event) => event.impressionId)).toEqual(["i1", "i2"]);
@@ -144,12 +153,13 @@ describe("AdSlot", () => {
     render(<AdProvider apiUrl="https://ads.example"><AdSlot placement="sidebar" /></AdProvider>);
     const link = await screen.findByRole("link", { name: "A useful product" });
     fireEvent.click(link);
+    flushEvents();
 
     const events = sentEvents();
     expect(events.map((event) => event.type)).toEqual(["impression", "click"]);
     expect(events[0]?.eventId).not.toBe(events[1]?.eventId);
-    expect(fetchMock).toHaveBeenCalledTimes(3);
-    expect(fetchMock.mock.calls[2]?.[1]?.keepalive).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[1]?.keepalive).toBe(true);
   });
 
   it("uses the fetch fallback without unhandled rejection when sendBeacon is unavailable", async () => {
@@ -157,11 +167,80 @@ describe("AdSlot", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(firstAd)).mockRejectedValue(new Error("offline"));
     render(<AdProvider apiUrl="https://ads.example"><AdSlot placement="sidebar" /></AdProvider>);
     await screen.findByRole("link", { name: "A useful product" });
+    flushEvents();
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
     expect(fetchMock.mock.calls[1]?.[1]?.keepalive).toBe(true);
   });
 
+});
+
+describe("event batching", () => {
+  it("flushes ten events together and flushes remaining events when hidden", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(firstAd)).mockResolvedValue(new Response(null, { status: 202 }));
+    render(<AdProvider apiUrl="https://ads.example"><AdSlot placement="sidebar" /></AdProvider>);
+    const link = await screen.findByRole("link", { name: "A useful product" });
+    for (let i = 0; i < 9; i++) fireEvent.click(link);
+    expect(JSON.parse(fetchMock.mock.calls[1]![1]!.body as string).events).toHaveLength(10);
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(link);
+    flushEvents();
+    expect(sentEvents()).toHaveLength(1);
+  });
+  it("retries a rejected batch with the same event IDs", async () => {
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 })).mockResolvedValue(new Response(null, { status: 202 }));
+    function Conversion() {
+      const track = useAdEvents();
+      return <button onClick={() => track({ eventId: "retry-id", type: "conversion", impressionId: "i1", campaignId: "c1", creativeId: "cr1", placement: "sidebar", ts: 123 })}>Convert</button>;
+    }
+    vi.useFakeTimers();
+    render(<AdProvider apiUrl="https://ads.example"><Conversion /></AdProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Convert" }));
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); });
+    await act(async () => { vi.advanceTimersByTime(5000); await Promise.resolve(); });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
+    vi.useRealTimers();
+  });
+
+  it("queues custom conversion events", () => {
+    function Conversion() {
+      const track = useAdEvents();
+      return <button onClick={() => track({ eventId: "e1", type: "conversion", impressionId: "i1", campaignId: "c1", creativeId: "cr1", placement: "sidebar", ts: 123 })}>Convert</button>;
+    }
+    render(<AdProvider apiUrl="https://ads.example"><Conversion /></AdProvider>);
+    fireEvent.click(screen.getByRole("button", { name: "Convert" }));
+    flushEvents();
+    expect(sentEvents()).toEqual([{ eventId: "e1", type: "conversion", impressionId: "i1", campaignId: "c1", creativeId: "cr1", placement: "sidebar", ts: 123 }]);
+  });
+
+  it("requires one continuous second of visibility and counts it once", async () => {
+    let notify!: IntersectionObserverCallback;
+    let target!: Element;
+    class Observer {
+      constructor(callback: IntersectionObserverCallback) { notify = callback; }
+      observe(element: Element) { target = element; }
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", Observer);
+    fetchMock.mockResolvedValue(jsonResponse(firstAd));
+    render(<AdProvider apiUrl="https://ads.example"><AdSlot placement="sidebar" /></AdProvider>);
+    await screen.findByRole("link", { name: "A useful product" });
+    vi.useFakeTimers();
+    const intersect = (ratio: number) => act(() => notify([{ target, isIntersecting: ratio > 0, intersectionRatio: ratio } as IntersectionObserverEntry], {} as IntersectionObserver));
+    intersect(0.5);
+    act(() => vi.advanceTimersByTime(900));
+    intersect(0.4);
+    act(() => vi.advanceTimersByTime(200));
+    intersect(0.5);
+    act(() => vi.advanceTimersByTime(1000));
+    intersect(0);
+    intersect(1);
+    act(() => vi.advanceTimersByTime(1000));
+    flushEvents();
+    expect(sentEvents().map((event) => event.type)).toEqual(["impression", "viewable"]);
+    vi.useRealTimers();
+  });
 });
 
 describe("AdStats", () => {

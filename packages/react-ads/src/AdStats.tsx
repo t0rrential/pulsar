@@ -33,11 +33,13 @@ export function AdStats({ campaignId, days = 7, refreshKey }: AdStatsProps) {
   let requests = 0;
   let impressions = 0;
   let clicks = 0;
+  let viewable = 0;
   let maximum = 0;
   for (const day of daily) {
     requests += day.requests;
     impressions += day.impressions;
     clicks += day.clicks;
+    viewable += day.viewable ?? 0;
     maximum = Math.max(maximum, day.impressions, day.clicks);
   }
   const chartMaximum = Math.max(4, Math.ceil(maximum / 4) * 4);
@@ -45,6 +47,7 @@ export function AdStats({ campaignId, days = 7, refreshKey }: AdStatsProps) {
   const metrics = [
     { label: "Ad requests", value: numberFormat.format(requests), note: "Filled ad responses" },
     { label: "Impressions", value: numberFormat.format(impressions), note: "Ads rendered" },
+    { label: "Viewable", value: numberFormat.format(viewable), note: "At least 50% visible for 1 second" },
     { label: "Clicks", value: numberFormat.format(clicks), note: "Ad link interactions" },
     { label: "Click-through rate", value: impressions ? rateFormat.format(clicks / impressions) : "—", note: "Clicks ÷ impressions" },
   ];
@@ -98,10 +101,10 @@ export function AdStats({ campaignId, days = 7, refreshKey }: AdStatsProps) {
         <div className="stats-table-scroll" style={{ maxWidth: "100%", overflowX: "auto" }}>
           <table style={{ width: "100%", borderCollapse: "collapse", textAlign: "left" }}>
             <caption>Campaign {campaignId} statistics — last {days} days (UTC)</caption>
-            <thead><tr><th scope="col">Date (UTC)</th><th scope="col">Requests</th><th scope="col">Impressions</th><th scope="col">Clicks</th></tr></thead>
+            <thead><tr><th scope="col">Date (UTC)</th><th scope="col">Requests</th><th scope="col">Impressions</th><th scope="col">Viewable</th><th scope="col">Clicks</th></tr></thead>
             <tbody>
               {daily.map((day) => (
-                <tr key={day.date}><th scope="row"><time dateTime={day.date}>{day.date}</time></th><td>{numberFormat.format(day.requests)}</td><td>{numberFormat.format(day.impressions)}</td><td>{numberFormat.format(day.clicks)}</td></tr>
+                <tr key={day.date}><th scope="row"><time dateTime={day.date}>{day.date}</time></th><td>{numberFormat.format(day.requests)}</td><td>{numberFormat.format(day.impressions)}</td><td>{numberFormat.format(day.viewable ?? 0)}</td><td>{numberFormat.format(day.clicks)}</td></tr>
               ))}
             </tbody>
           </table>
