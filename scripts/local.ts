@@ -1,5 +1,6 @@
 import http from 'node:http';
 import net from 'node:net';
+import { once } from 'node:events';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { CreateTableCommand, DynamoDBClient, ListTablesCommand } from '@aws-sdk/client-dynamodb';
@@ -17,10 +18,10 @@ if (new Set([apiPort, databasePort, storagePort]).size !== 3) {
 }
 for (const port of [apiPort, databasePort, storagePort]) {
   const server = net.createServer();
-  const { promise, resolve, reject } = Promise.withResolvers<void>();
-  server.once('error', reject);
-  server.listen(port, '127.0.0.1', () => server.close((error) => error ? reject(error) : resolve()));
-  await promise;
+  server.listen(port, '127.0.0.1');
+  await once(server, 'listening');
+  server.close();
+  await once(server, 'close');
 }
 
 // This runner always uses a local database, never an authenticated AWS table.

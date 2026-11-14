@@ -19,7 +19,7 @@ function run(args: string[]): void {
 
 try {
   if (process.argv.slice(2).length !== 1 || process.argv[2] !== '--confirm') {
-    throw new Error('This permanently deletes showcase counters and site assets. Run npm run showcase:delete -- --confirm to proceed.');
+    throw new Error('This permanently deletes showcase counters, uploads, raw events, query results and site assets. Run npm run showcase:delete -- --confirm to proceed.');
   }
   const identity = aws<{ Account: string; Arn: string }>(['sts', 'get-caller-identity']);
   if (!/^\d{12}$/.test(identity.Account) || !identity.Arn) throw new Error('AWS returned no valid account identity.');

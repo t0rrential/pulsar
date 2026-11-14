@@ -87,7 +87,7 @@ On AWS, events are sent to Firehose after the DynamoDB transaction and converted
 
 ## Deploy the full showcase to AWS
 
-Requires Node.js 24 LTS, npm, AWS CLI v2, AWS SAM CLI, authenticated **non-root** credentials, and permissions for the added Firehose, Glue, Athena, S3 and IAM resources. The existing permissions boundary must permit the new roles and actions. Review the change set and costs before deploying; the additional resources are not covered by a hard spending cap.
+Requires Node.js 24 LTS, npm, AWS CLI v2, AWS SAM CLI, authenticated **non-root** credentials, and permissions for the added Firehose, Glue, Athena, S3 and IAM resources. The existing permissions boundary must permit the new roles and actions. Review the template and costs before deploying; the script executes its change set without an interactive review and the additional resources are not covered by a hard spending cap.
 
 The local profile **`pulsar`** uses temporary credentials through a local `credential_process` (initial session expires 2026-10-19 17:08 UTC), not credentials committed to this repository. It uses the non-root operator `pulsar-operator` / deployer role `PulsarShowcaseDeployer`; bootstrap access keys have been deleted. The default CLI profile now forwards to `pulsar`, and the cached root CLI login was removed. CLI and MCP identities were verified as the non-root deployment role. Expired sessions must be renewed using the non-root authentication flow below; expiration does not stop the deployed website.
 
