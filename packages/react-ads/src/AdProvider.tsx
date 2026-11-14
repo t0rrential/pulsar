@@ -20,6 +20,7 @@ export function AdProvider({ apiUrl, children }: AdProviderProps) {
     let events: AdEvent[] = [];
     let sending = false;
     let stopped = false;
+    const sessionId = crypto.randomUUID();
     const url = `${baseUrl}/events`;
     const flush = (unloading = false) => {
       if (!events.length || sending) return;
@@ -58,7 +59,7 @@ export function AdProvider({ apiUrl, children }: AdProviderProps) {
       start: () => { stopped = false; },
       stop: () => { stopped = true; flush(true); },
       value: { apiUrl: baseUrl, track: (event: AdEvent) => {
-        events.push(event);
+        events.push({ ...event, sessionId: event.sessionId ?? sessionId });
         if (events.length >= 10) flush();
       } },
     };

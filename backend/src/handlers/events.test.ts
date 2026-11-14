@@ -26,6 +26,14 @@ test('rejects oversized batches and missing identifiers', async () => {
   assert.equal((await postEvents(request([{ ...sample, eventId: '' }]))).statusCode, 400);
 });
 
+test('rejects invalid session identifiers', async () => {
+  const original = db.send;
+  db.send = (async () => ({})) as typeof db.send;
+  try {
+    assert.equal((await postEvents(request([{ ...sample, sessionId: '' }]))).statusCode, 400);
+  } finally { db.send = original; }
+});
+
 test('conversion events increment the conversions counter', async () => {
   const original = db.send;
   db.send = (async (command: TransactWriteCommand) => {

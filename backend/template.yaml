@@ -16,6 +16,11 @@ Parameters:
     Type: String
     Description: Email address for actual-spend warnings; budgets do not impose a hard spending cap
     AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  AdminKey:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Secret admin API key; supply securely during deployment and rotate by updating the stack.
 
 Conditions:
   HasDeploymentPermissionsBoundary: !Not [!Equals [!Ref DeploymentPermissionsBoundary, '']]
@@ -45,6 +50,9 @@ Resources:
           - Stack deletion and replacement intentionally delete demo data.
     Properties:
       BillingMode: PAY_PER_REQUEST
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
       AttributeDefinitions:
         - AttributeName: PK
           AttributeType: S
@@ -65,8 +73,8 @@ Resources:
       CorsConfiguration:
         AllowOrigins:
           - http://127.0.0.1:5173
-        AllowMethods: [GET, POST, OPTIONS]
-        AllowHeaders: [Content-Type]
+        AllowMethods: [GET, POST, PUT, OPTIONS]
+        AllowHeaders: [Content-Type, x-admin-key]
     Metadata:
       com.aws.cloudformation.Context:
         why: Public prototype API; origin restriction and modest throttling limit browser access and bursts, not authorization.
@@ -84,6 +92,11 @@ Resources:
           - Keep private; serve objects only through the website Lambda.
           - Empty the bucket before stack deletion or replacement; CloudFormation does not delete its objects.
     Properties:
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: ['*']
+            AllowedMethods: [PUT]
+            AllowedHeaders: [Content-Type]
       BucketEncryption:
         ServerSideEncryptionConfiguration:
           - ServerSideEncryptionByDefault:
@@ -197,6 +210,62 @@ Resources:
     Properties:
       LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-get-stats'
       RetentionInDays: 7
+  AdminLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-admin'
+      RetentionInDays: 7
+
+  AdminFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: AdminLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-admin'
+      CodeUri: .
+      Handler: admin.handler
+      Environment:
+        Variables:
+          ADMIN_KEY: !Ref AdminKey
+          SITE_BUCKET: !Ref SiteBucket
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:Scan, dynamodb:Query, dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt AdPlatform.Arn
+            - Effect: Allow
+              Action: s3:PutObject
+              Resource: !Sub '${SiteBucket.Arn}/uploads/*'
+      Events:
+        ListCampaigns:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /campaigns, Method: GET}
+        CreateCampaign:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /campaigns, Method: POST}
+        UpdateCampaign:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: '/campaigns/{id}', Method: PUT}
+        CreateCreative:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: '/campaigns/{id}/creatives', Method: POST}
+        Upload:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /uploads, Method: POST}
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Authenticated administration and short-lived upload URLs for the private site bucket.
+        must:
+          - Keep upload permissions confined to the uploads prefix and include this function in the cost guard.
+      BuildMethod: esbuild
+      BuildProperties:
+        Target: es2022
+        Format: cjs
+        OutExtension: ['.js=.cjs']
+        Minify: true
+        EntryPoints: [src/handlers/admin.ts]
+
 
   GetAdFunction:
     Type: AWS::Serverless::Function
@@ -240,11 +309,17 @@ Resources:
       FunctionName: !Sub '${AWS::StackName}-post-events'
       CodeUri: .
       Handler: postEvents.handler
+      Environment:
+        Variables:
+          FIREHOSE_STREAM_NAME: !Ref EventStream
       Policies:
         - Statement:
             - Effect: Allow
-              Action: dynamodb:UpdateItem
+              Action: [dynamodb:PutItem, dynamodb:GetItem, dynamodb:UpdateItem, dynamodb:TransactWriteItems]
               Resource: !GetAtt AdPlatform.Arn
+            - Effect: Allow
+              Action: firehose:PutRecordBatch
+              Resource: !GetAtt EventStream.Arn
       Events:
         PostEvents:
           Type: HttpApi
@@ -297,6 +372,209 @@ Resources:
         Minify: true
         EntryPoints: [src/handlers/getStats.ts]
 
+  RawEventsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Disposable encrypted analytics data and failed conversion records without version storage costs.
+        must:
+          - Empty all objects before stack deletion or replacement; data is not retained.
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  QueryResultsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Private disposable Athena query results.
+        must:
+          - Empty all objects before stack deletion or replacement; data is not retained.
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerEnforced
+
+  RawEventsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref RawEventsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: [!GetAtt RawEventsBucket.Arn, !Sub '${RawEventsBucket.Arn}/*']
+            Condition:
+              Bool: {'aws:SecureTransport': 'false'}
+
+  QueryResultsBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref QueryResultsBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Deny
+            Principal: '*'
+            Action: 's3:*'
+            Resource: [!GetAtt QueryResultsBucket.Arn, !Sub '${QueryResultsBucket.Arn}/*']
+            Condition:
+              Bool: {'aws:SecureTransport': 'false'}
+
+  AnalyticsDatabase:
+    Type: AWS::Glue::Database
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Catalog for Firehose conversion and Athena without a crawler.
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Description: Pulsar raw events catalog
+
+  EventsTable:
+    Type: AWS::Glue::Table
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Shared JSON conversion schema and projected arrival-date partitions for Parquet.
+        must:
+          - Keep the storage template aligned with the Firehose UTC timestamp prefix.
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseName: !Ref AnalyticsDatabase
+      TableInput:
+        Name: events
+        TableType: EXTERNAL_TABLE
+        Parameters:
+          classification: parquet
+          projection.enabled: 'true'
+          projection.dt.type: date
+          projection.dt.format: yyyy-MM-dd
+          projection.dt.range: '2020-01-01,NOW'
+          projection.dt.interval: '1'
+          projection.dt.interval.unit: DAYS
+          storage.location.template: !Sub 's3://${RawEventsBucket}/events/dt=${!dt}/'
+        PartitionKeys:
+          - {Name: dt, Type: string}
+        StorageDescriptor:
+          Location: !Sub 's3://${RawEventsBucket}/events/'
+          InputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetInputFormat
+          OutputFormat: org.apache.hadoop.hive.ql.io.parquet.MapredParquetOutputFormat
+          SerdeInfo:
+            SerializationLibrary: org.apache.hadoop.hive.ql.io.parquet.serde.ParquetHiveSerDe
+          Columns:
+            - {Name: eventid, Type: string}
+            - {Name: type, Type: string}
+            - {Name: impressionid, Type: string}
+            - {Name: campaignid, Type: string}
+            - {Name: creativeid, Type: string}
+            - {Name: placement, Type: string}
+            - {Name: sessionid, Type: string}
+            - {Name: ts, Type: bigint}
+
+  EventDeliveryRole:
+    Type: AWS::IAM::Role
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Firehose can read the conversion schema and write only its analytics bucket.
+    Properties:
+      PermissionsBoundary: !If [HasDeploymentPermissionsBoundary, !Ref DeploymentPermissionsBoundary, !Ref 'AWS::NoValue']
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal: {Service: firehose.amazonaws.com}
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals: {'sts:ExternalId': !Ref AWS::AccountId}
+      Policies:
+        - PolicyName: delivery
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [s3:AbortMultipartUpload, s3:GetBucketLocation, s3:GetObject, s3:ListBucket, s3:ListBucketMultipartUploads, s3:PutObject]
+                Resource: [!GetAtt RawEventsBucket.Arn, !Sub '${RawEventsBucket.Arn}/*']
+              - Effect: Allow
+                Action: [glue:GetTable, glue:GetTableVersion, glue:GetTableVersions]
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog'
+                  - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${AnalyticsDatabase}'
+                  - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${AnalyticsDatabase}/events'
+
+  EventStream:
+    Type: AWS::KinesisFirehose::DeliveryStream
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Direct PUT event ingestion with buffered Parquet delivery and separate conversion errors.
+        must:
+          - The dt prefix reflects Firehose arrival time, not the event timestamp.
+          - Buffered data and failed delivery may outlive a cost-guard shutdown and incur charges.
+    Properties:
+      DeliveryStreamType: DirectPut
+      ExtendedS3DestinationConfiguration:
+        BucketARN: !GetAtt RawEventsBucket.Arn
+        RoleARN: !GetAtt EventDeliveryRole.Arn
+        Prefix: 'events/dt=!{timestamp:yyyy-MM-dd}/'
+        ErrorOutputPrefix: 'errors/!{firehose:error-output-type}/dt=!{timestamp:yyyy-MM-dd}/'
+        BufferingHints:
+          IntervalInSeconds: 900
+          SizeInMBs: 128
+        DataFormatConversionConfiguration:
+          Enabled: true
+          InputFormatConfiguration:
+            Deserializer:
+              OpenXJsonSerDe: {}
+          OutputFormatConfiguration:
+            Serializer:
+              ParquetSerDe:
+                Compression: SNAPPY
+          SchemaConfiguration:
+            CatalogId: !Ref AWS::AccountId
+            DatabaseName: !Ref AnalyticsDatabase
+            TableName: !Ref EventsTable
+            Region: !Ref AWS::Region
+            RoleARN: !GetAtt EventDeliveryRole.Arn
+
+  AnalyticsWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Separate workgroup enforces encrypted results in the disposable query bucket.
+        must:
+          - Query and storage charges continue independently of the Lambda cost guard.
+    Properties:
+      Name: !Sub '${AWS::StackName}-analytics'
+      RecursiveDeleteOption: true
+      WorkGroupConfiguration:
+        EnforceWorkGroupConfiguration: true
+        ResultConfiguration:
+          OutputLocation: !Sub 's3://${QueryResultsBucket}/results/'
+          EncryptionConfiguration:
+            EncryptionOption: SSE_S3
+
   BudgetTopic:
     Type: AWS::SNS::Topic
     Metadata:
@@ -344,7 +622,7 @@ Resources:
       Environment:
         Variables:
           BUDGET_TOPIC_ARN: !Ref BudgetTopic
-          SHOWCASE_FUNCTION_NAMES: !Join [',', [!Ref GetAdFunction, !Ref PostEventsFunction, !Ref GetStatsFunction, !Ref SiteFunction]]
+          SHOWCASE_FUNCTION_NAMES: !Join [',', [!Ref GetAdFunction, !Ref PostEventsFunction, !Ref GetStatsFunction, !Ref SiteFunction, !Ref AdminFunction]]
       Policies:
         - Statement:
             - Effect: Allow
@@ -354,6 +632,7 @@ Resources:
                 - !GetAtt PostEventsFunction.Arn
                 - !GetAtt GetStatsFunction.Arn
                 - !GetAtt SiteFunction.Arn
+                - !GetAtt AdminFunction.Arn
       Events:
         Budget:
           Type: SNS
@@ -434,3 +713,18 @@ Outputs:
   CostGuardFunctionName:
     Description: Shutdown handler subscribed to the budget topic
     Value: !Ref CostGuardFunction
+  EventStreamName:
+    Description: Direct PUT event delivery stream
+    Value: !Ref EventStream
+  AnalyticsDatabaseName:
+    Description: Glue database containing the projected events table
+    Value: !Ref AnalyticsDatabase
+  AnalyticsWorkGroupName:
+    Description: Athena workgroup for event queries
+    Value: !Ref AnalyticsWorkGroup
+  RawEventsBucketName:
+    Description: Private Parquet events and conversion-error bucket
+    Value: !Ref RawEventsBucket
+  QueryResultsBucketName:
+    Description: Private Athena query results bucket
+    Value: !Ref QueryResultsBucket

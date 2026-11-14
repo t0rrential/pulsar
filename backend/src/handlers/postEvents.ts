@@ -45,7 +45,8 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     const item = value as Partial<AdEvent>;
     if (!isIdentifier(item.eventId) || !isIdentifier(item.impressionId) ||
         !isIdentifier(item.campaignId) || !isIdentifier(item.creativeId) ||
-        !isIdentifier(item.placement) || !['impression', 'click', 'viewable', 'conversion'].includes(item.type ?? '') ||
+        !isIdentifier(item.placement) || (item.sessionId !== undefined && !isIdentifier(item.sessionId)) ||
+        !['impression', 'click', 'viewable', 'conversion'].includes(item.type ?? '') ||
         typeof item.ts !== 'number' || !Number.isInteger(item.ts) ||
         item.ts < 0 || item.ts > 253_402_300_799_999) {
       return json(400, { error: 'Invalid event: identifiers, known type, and a valid UTC millisecond timestamp are required' });
@@ -53,6 +54,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     events.push({
       eventId: item.eventId, impressionId: item.impressionId, campaignId: item.campaignId,
       creativeId: item.creativeId, placement: item.placement, type: item.type!, ts: item.ts,
+      ...(item.sessionId ? { sessionId: item.sessionId } : {}),
     });
   }
 

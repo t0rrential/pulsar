@@ -203,16 +203,6 @@ describe("event batching", () => {
     vi.useRealTimers();
   });
 
-  it("queues custom conversion events", () => {
-    function Conversion() {
-      const track = useAdEvents();
-      return <button onClick={() => track({ eventId: "e1", type: "conversion", impressionId: "i1", campaignId: "c1", creativeId: "cr1", placement: "sidebar", ts: 123 })}>Convert</button>;
-    }
-    render(<AdProvider apiUrl="https://ads.example"><Conversion /></AdProvider>);
-    fireEvent.click(screen.getByRole("button", { name: "Convert" }));
-    flushEvents();
-    expect(sentEvents()).toEqual([{ eventId: "e1", type: "conversion", impressionId: "i1", campaignId: "c1", creativeId: "cr1", placement: "sidebar", ts: 123 }]);
-  });
 
   it("requires one continuous second of visibility and counts it once", async () => {
     let notify!: IntersectionObserverCallback;

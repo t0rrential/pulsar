@@ -1,4 +1,5 @@
 import http from 'node:http';
+import net from 'node:net';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { CreateTableCommand, DynamoDBClient, ListTablesCommand } from '@aws-sdk/client-dynamodb';
@@ -10,6 +11,16 @@ const databasePort = Number(process.env.DB_PORT || 8000);
 const storagePort = Number(process.env.STORAGE_PORT || 9000);
 if (![apiPort, databasePort, storagePort].every((port) => Number.isInteger(port) && port > 0 && port <= 65535)) {
   throw new Error('API_PORT, DB_PORT and STORAGE_PORT must be integers between 1 and 65535.');
+}
+if (new Set([apiPort, databasePort, storagePort]).size !== 3) {
+  throw new Error('API_PORT, DB_PORT and STORAGE_PORT must be distinct.');
+}
+for (const port of [apiPort, databasePort, storagePort]) {
+  const server = net.createServer();
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  server.once('error', reject);
+  server.listen(port, '127.0.0.1', () => server.close((error) => error ? reject(error) : resolve()));
+  await promise;
 }
 
 // This runner always uses a local database, never an authenticated AWS table.

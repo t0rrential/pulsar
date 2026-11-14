@@ -16,6 +16,7 @@ export interface AdEvent {
   campaignId: string;
   creativeId: string;
   placement: string;
+  sessionId?: string;
   ts: number;
 }
 

@@ -23,6 +23,8 @@ function aws<T>(args: string[]): T {
 function main(): void {
   const email = process.env.BUDGET_EMAIL?.trim();
   if (!email) throw new Error('Set BUDGET_EMAIL to the approved budget-alert address before deploying.');
+  const adminKey = process.env.ADMIN_KEY;
+  if (!adminKey || !/^[A-Za-z0-9_-]{32,}$/.test(adminKey)) throw new Error('Set ADMIN_KEY to at least 32 letters, digits, underscores or hyphens before deploying.');
   const identity = aws<{ Account: string; Arn: string }>(['sts', 'get-caller-identity']);
   if (!/^\d{12}$/.test(identity.Account) || !identity.Arn) throw new Error('AWS returned no valid account identity.');
   if (identity.Arn.endsWith(':root')) throw new Error('Root credentials are forbidden. Use a non-root AWS profile.');
@@ -37,8 +39,14 @@ function main(): void {
     if (!description.Stacks[0]?.Outputs?.some((output) => output.OutputKey === 'SiteUrl')) {
       throw new Error('Existing stack has no SiteUrl; inspect its status before updating.');
     }
-    for (const name of ['get-ad', 'post-events', 'get-stats', 'site']) {
-      const concurrency = aws<{ ReservedConcurrentExecutions?: number }>(['lambda', 'get-function-concurrency', '--function-name', `${stack}-${name}`]);
+    for (const name of ['get-ad', 'post-events', 'get-stats', 'site', 'admin']) {
+      const result = spawnSync('aws', [...awsArgs, 'lambda', 'get-function-concurrency', '--function-name', `${stack}-${name}`, '--output', 'json'], { cwd, env, encoding: 'utf8' });
+      if (result.error) throw result.error;
+      if (result.status !== 0) {
+        if (name === 'admin' && /\(ResourceNotFoundException\)/.test(result.stderr)) continue;
+        throw new Error(`Unable to inspect ${stack}-${name}: ${result.stderr || result.status}`);
+      }
+      const concurrency = JSON.parse(result.stdout) as { ReservedConcurrentExecutions?: number };
       if (concurrency.ReservedConcurrentExecutions === 0) throw new Error(`${stack}-${name} is stopped. Review spending and recover manually before redeploying.`);
     }
   } else if (!/\(ValidationError\)[\s\S]*does not exist/.test(previous.stderr)) {
@@ -65,7 +73,7 @@ function main(): void {
     '--profile', profile, '--region', region, '--s3-bucket', artifacts,
     '--no-confirm-changeset', '--no-fail-on-empty-changeset', '--capabilities', 'CAPABILITY_IAM',
     '--tags', 'Project=pulsar-showcase', '--parameter-overrides',
-    `DeploymentPermissionsBoundary=${boundary}`, `BudgetEmail=${email}`,
+    `DeploymentPermissionsBoundary=${boundary}`, `BudgetEmail=${email}`, `AdminKey=${adminKey}`,
   ]);
 
   const description = aws<StackDescription>(['cloudformation', 'describe-stacks', '--stack-name', stack]);
@@ -82,7 +90,7 @@ function main(): void {
   delete seedEnv.AWS_SESSION_TOKEN;
   run('npm', ['run', 'seed'], seedEnv);
   const destination = `s3://${outputs.SiteBucketName}/`;
-  run('aws', [...awsArgs, 's3', 'sync', 'demo/dist/', destination, '--delete', '--cache-control', 'public,max-age=60']);
+  run('aws', [...awsArgs, 's3', 'sync', 'demo/dist/', destination, '--delete', '--exclude', 'uploads/*', '--cache-control', 'public,max-age=60']);
   run('aws', [...awsArgs, 's3', 'cp', 'demo/dist/assets/', `${destination}assets/`, '--recursive', '--cache-control', 'public,max-age=31536000,immutable']);
   run('aws', [...awsArgs, 's3', 'cp', 'demo/dist/', destination, '--recursive', '--exclude', '*', '--include', '*.svg', '--cache-control', 'public,max-age=3600']);
   console.log(`Showcase: ${outputs.SiteUrl}`);

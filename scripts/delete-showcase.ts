@@ -25,11 +25,14 @@ try {
   if (!/^\d{12}$/.test(identity.Account) || !identity.Arn) throw new Error('AWS returned no valid account identity.');
   if (identity.Arn.endsWith(':root')) throw new Error('Root credentials are forbidden. Use a non-root AWS profile.');
   const description = aws<{ Stacks: { Outputs?: { OutputKey: string; OutputValue: string }[] }[] }>(['cloudformation', 'describe-stacks', '--stack-name', stack]);
-  const siteBucket = description.Stacks[0]?.Outputs?.find((output) => output.OutputKey === 'SiteBucketName')?.OutputValue;
-  if (!siteBucket) throw new Error('Stack has no SiteBucketName output; refusing to guess which bucket to empty.');
-  run(['s3api', 'head-bucket', '--bucket', siteBucket, '--expected-bucket-owner', identity.Account]);
-  console.log(`Deleting ${stack} in account ${identity.Account}, region ${region}; emptying only ${siteBucket}.`);
-  run(['s3', 'rm', `s3://${siteBucket}/`, '--recursive']);
+  const outputs = Object.fromEntries((description.Stacks[0]?.Outputs || []).map(({ OutputKey, OutputValue }) => [OutputKey, OutputValue]));
+  const buckets = ['SiteBucketName', 'RawEventsBucketName', 'QueryResultsBucketName'].map((key) => outputs[key]).filter(Boolean);
+  if (!outputs.SiteBucketName) throw new Error('Stack has no SiteBucketName output; refusing to guess which bucket to empty.');
+  for (const bucket of buckets) {
+    run(['s3api', 'head-bucket', '--bucket', bucket, '--expected-bucket-owner', identity.Account]);
+    console.log(`Emptying ${bucket} in account ${identity.Account}, region ${region}.`);
+    run(['s3', 'rm', `s3://${bucket}/`, '--recursive']);
+  }
   run(['cloudformation', 'delete-stack', '--stack-name', stack]);
   run(['cloudformation', 'wait', 'stack-delete-complete', '--stack-name', stack]);
   console.log(`Deleted ${stack}. Artifact bucket ${stack}-artifacts-${identity.Account}-${region} and operator IAM identity were intentionally retained.`);

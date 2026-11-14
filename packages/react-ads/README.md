@@ -1,9 +1,10 @@
 # @pulsar/react-ads
 
-React components and event tracking for the Pulsar ad API. React and React DOM 18 or 19 are peer dependencies.
+React components and event tracking for the Pulsar ad API. React and React DOM 18 or 19 are peer dependencies. This package is not published to npm; build and pack it from the workspace:
 
 ```sh
-npm install @pulsar/react-ads react react-dom
+npm run build --workspace=@pulsar/react-ads
+npm pack --workspace=@pulsar/react-ads
 ```
 
 ```tsx
@@ -49,6 +50,8 @@ An impression is queued when the ad renders. A viewable event is queued once whe
 ## useAdEvents
 
 Call the hook inside an `AdProvider` to obtain `track(event)`. An `AdEvent` has `eventId`, `type` (`impression`, `click`, `viewable`, or `conversion`), `impressionId`, `campaignId`, `creativeId`, `placement`, and numeric millisecond timestamp `ts`. Generate a unique `eventId` for each event and retain the ad identifiers from `onLoad` to associate a conversion with an impression.
+
+The provider supplies a session ID for events that omit one. Its scope is the provider instance and API URL; callers may provide their own `sessionId` to correlate across instances.
 
 ## AdStats
 
