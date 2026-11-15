@@ -547,7 +547,8 @@ Resources:
           Enabled: true
           InputFormatConfiguration:
             Deserializer:
-              OpenXJsonSerDe: {}
+              OpenXJsonSerDe:
+                CaseInsensitive: true
           OutputFormatConfiguration:
             Serializer:
               ParquetSerDe:
