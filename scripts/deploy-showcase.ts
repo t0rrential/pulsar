@@ -46,7 +46,7 @@ function main(): void {
         if (name === 'admin' && /\(ResourceNotFoundException\)/.test(result.stderr)) continue;
         throw new Error(`Unable to inspect ${stack}-${name}: ${result.stderr || result.status}`);
       }
-      const concurrency = JSON.parse(result.stdout) as { ReservedConcurrentExecutions?: number };
+      const concurrency = (result.stdout.trim() ? JSON.parse(result.stdout) : {}) as { ReservedConcurrentExecutions?: number };
       if (concurrency.ReservedConcurrentExecutions === 0) throw new Error(`${stack}-${name} is stopped. Review spending and recover manually before redeploying.`);
     }
   } else if (!/\(ValidationError\)[\s\S]*does not exist/.test(previous.stderr)) {

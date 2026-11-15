@@ -14,6 +14,7 @@ Parameters:
     AllowedPattern: '^$|^arn:[a-z0-9-]+:iam::[0-9]{12}:policy/.+$'
   BudgetEmail:
     Type: String
+    NoEcho: true
     Description: Email address for actual-spend warnings; budgets do not impose a hard spending cap
     AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
   AdminKey:
