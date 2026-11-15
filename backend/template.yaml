@@ -453,6 +453,7 @@ Resources:
     Properties:
       CatalogId: !Ref AWS::AccountId
       DatabaseInput:
+        Name: !Sub '${AWS::StackName}-analytics'
         Description: Pulsar raw events catalog
 
   EventsTable:
