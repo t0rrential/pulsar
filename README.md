@@ -4,6 +4,8 @@ A React ad package, a publisher showcase, and a SAM serverless API backed by Dyn
 
 **Live showcase:** https://uhroesgpkb.execute-api.us-east-1.amazonaws.com/ — the redesigned dashboard, dark mode, six sample campaigns, opt-in browser fingerprinting, and updated tracking, administration, and analytics infrastructure are deployed. Live ad serving, event counters, admin authentication and image upload were checked; Firehose delivered Parquet to S3 and an Athena query returned recorded events. The deployer role was denied `athena:StartQueryExecution`; the query was verified using an authorized root session.
 
+The fingerprint reporting, updated preview and in-dashboard pipeline explorer described below are in the source tree; the currently deployed showcase may not yet include them.
+
 ## Run locally
 
 Requires Node.js 24 LTS, npm, and a running Docker daemon. No AWS credentials are needed for the local demo.
@@ -13,15 +15,15 @@ npm install
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173**. The API listens at `http://localhost:3001`, DynamoDB Local at `127.0.0.1:8000`, and S3Mock at `127.0.0.1:9000`. Set `API_PORT`, `DB_PORT`, or `STORAGE_PORT` to change these; set `VITE_API_URL` to the API URL if changing `API_PORT`. Port 5173 must be available: the local API's CORS origin and seeded creative URLs use it.
+Open **http://127.0.0.1:5173**. The API listens at `http://localhost:3001`, DynamoDB Local at `127.0.0.1:8000`, and S3Mock at `127.0.0.1:9000`. Set `API_PORT`, `DB_PORT`, or `STORAGE_PORT` to change these; set `VITE_API_URL` to the API URL if changing `API_PORT`. If Vite uses another port, set `LOCAL_WEB_ORIGIN` to its exact origin and `CREATIVE_BASE_URL` to that origin followed by `/creatives`.
 
 The runner starts disposable Docker containers for DynamoDB Local and S3Mock, creates the table and bucket, and seeds six campaigns, eight creatives, and seven days of synthetic sample statistics. Four campaigns start active and two paused. The dashboard labels local data as sample data; subsequent interactions add real events to those local counters. Stopping the runner deletes all local data. The local admin key defaults to `local-admin`; override it with `ADMIN_KEY`. This key and the object store are for local development only. Original SVG creatives are served by Vite. Remove a cloud `demo/.env` override before using this local-only option.
 
 1. Open **Overview**, select **Find your next adventure (`c3`)**, and note its click total.
-2. Open **Publisher preview**. There are two `sidebar` slots and one `banner` slot.
+2. Open **Publisher preview**. Use the desktop or mobile width controls to inspect one `sidebar` and one `banner` slot.
 3. Click the banner; it opens an advertiser page in a new tab.
 4. Return to **Overview** and use **Refresh data** after the event is recorded. The `c3` click total increases.
-5. Use **Load new ads** in Publisher preview to select new creatives. Sidebar campaigns are weighted; the banner always belongs to `c3`.
+5. Use **Refresh ads** in Publisher preview to select new creatives. Sidebar campaigns are weighted; the banner always belongs to `c3` in the default seed.
 
 Synthetic history is written only to the disposable local database. The normal seed script writes campaign and creative definitions, preserves existing counters, and does not fabricate AWS traffic; cloud counters reflect recorded activity. **Reseeding overwrites the six fixed campaign definitions and their seeded creatives**, including edits made through Campaigns. Other campaigns, uploaded objects, and existing counters are not reset.
 
@@ -33,9 +35,9 @@ Events are batched and counted by UTC day. Event IDs are deduplicated for approx
 
 Browser fingerprinting is optional and off until the visitor opts in. It hashes browser characteristics together with the publisher's origin, so the same signals on different sites produce different identifiers. A fingerprint is pseudonymous, not anonymous: different browsers may collide and browser changes may change the identifier. It is not suitable as proof of identity.
 
-The browser hashes the page origin, user agent, language, platform, hardware concurrency, screen dimensions and color depth, and time zone locally using SHA-256. It sends only the resulting 64-character hexadecimal digest with consented events, not those inputs. The origin is not a secret, and hashing does not make the identifier anonymous. Publishers integrating the package must obtain and manage appropriate consent themselves; the showcase's checkbox applies only to its own site.
+The browser hashes the page origin, user agent, language, platform, hardware concurrency, screen dimensions and color depth, and time zone locally using SHA-256. With consent it sends the resulting 64-character hexadecimal digest and coarse browser family and device category alongside ordinary event fields; it does not send the underlying fingerprint inputs or raw user agent. The origin is not a secret, and hashing does not make the identifier anonymous. Publishers integrating the package must obtain and manage appropriate consent themselves; the showcase's checkbox applies only to its own site.
 
-Fingerprint associations are stored separately in DynamoDB under `PK = FINGERPRINT#<fingerprint>` and `SK = EVENT#<eventId>`, with `expiresAt` set 30 days after ingestion. An authorized database operator can query that partition key to inspect associations; the dashboard does not currently provide a fingerprint reporting view. DynamoDB TTL deletion is asynchronous and can occur after the expiry time. Withdrawing consent stops future collection but does not immediately delete existing associations or recall events already sent. Fingerprints and their raw input signals are not sent to Firehose or stored in the existing S3 analytics history.
+Fingerprint associations are stored separately in DynamoDB under `PK = FINGERPRINT#<fingerprint>` and `SK = EVENT#<eventId>`, with `expiresAt` set 30 days after ingestion. After connecting under **Campaigns**, select a campaign and scroll to **Browser fingerprints** for approximate distinct fingerprints, daily events, first observed versus previously seen within retained history, and the latest hashes with coarse browser/device labels. Older associations have unknown labels. The 30-day view has no earlier comparison window, so returning is zero. The report ignores expired rows and scans at most 10,000 table items; it fails rather than presenting partial counts when this limit is exceeded, and displays at most 200 fingerprints. DynamoDB TTL deletion is asynchronous and can occur after expiry. Withdrawing consent stops future collection but does not immediately delete existing associations or recall events already sent. Fingerprints, browser/device labels and raw input signals are not sent to Firehose or stored in S3 analytics history.
 
 ## Workspace
 
@@ -101,8 +103,12 @@ All routes are relative to `ApiUrl`. The ad, event, and stats routes are public;
 | `GET /campaigns`, `POST /campaigns`, `PUT /campaigns/{id}` | List, create, and edit campaigns. |
 | `POST /campaigns/{id}/creatives` | Attach a creative to an existing campaign. |
 | `POST /uploads` | Create a five-minute presigned image upload URL. |
+| `GET /campaigns/{id}/fingerprints?days=7` | Admin-only retained fingerprint report; `days` is 1–30. |
+| `GET /analytics/pipeline` | Admin-only Firehose status and bounded S3 object metadata listing. |
+| `POST /analytics/queries` | Start a predefined Athena query for at most 31 inclusive UTC arrival dates. |
+| `GET /analytics/queries/{id}` | Read status and results for a query in the configured workgroup. |
 
-Each event has an `eventId`, `type` (`impression`, `viewable`, `click`, or `conversion`), `impressionId`, `campaignId`, `creativeId`, `placement`, and millisecond timestamp `ts`. `sessionId` and a 64-character lowercase hexadecimal `fingerprint` are optional. Identifier fields use 1–128 letters, digits, underscores, or hyphens. Deduplication and the counter increment happen in a DynamoDB transaction; fingerprint associations use that same transaction.
+Each event has an `eventId`, `type` (`impression`, `viewable`, `click`, or `conversion`), `impressionId`, `campaignId`, `creativeId`, `placement`, and millisecond timestamp `ts`. `sessionId` and a 64-character lowercase hexadecimal `fingerprint` are optional. A fingerprinted event can additionally carry `browser` (`Chrome`, `Edge`, `Firefox`, `Safari`, `Other`) and `device` (`Mobile`, `Tablet`, `Desktop`, `Other`); labels without a fingerprint are rejected. Identifier fields use 1–128 letters, digits, underscores, or hyphens. Deduplication and the counter increment happen in a DynamoDB transaction; fingerprint associations use that same transaction.
 
 If Firehose rejects a batch, the API can return `503` after counters have already been updated. Retrying the same event IDs avoids double-counting and can retry pending raw delivery, but there is no independent replay worker. Client queues and beacon delivery are best-effort, and raw delivery can be delayed or duplicated.
 
@@ -110,7 +116,9 @@ If Firehose rejects a batch, the API can return `503` after counters have alread
 
 Open **Campaigns**, enter the admin key, and connect to list, create, edit, pause, or resume campaigns. Select a campaign to upload a PNG, JPEG, WebP, or GIF and add a creative. Uploads use five-minute presigned PUT URLs. File type is checked by declared MIME type, not by inspecting bytes or enforcing a size limit; this is a solo-operator demo, not a hardened upload service. The Overview campaign selector is currently a fixed list of seeded campaigns, so newly created campaigns appear in Campaigns but not automatically in Overview.
 
-On AWS, events are sent to Firehose after the DynamoDB transaction and converted to Parquet in S3. Athena queries in `backend/analytics.sql` use projected UTC arrival-date partitions; adjust the example dates before running them. Delivery is buffered for up to 15 minutes under normal conditions and may be delayed or duplicated; DynamoDB remains the live counter source. Provider-generated session IDs last for the provider instance and API URL. Events without a session ID are excluded from the session query. Athena execution was verified with an authorized root session; the deployer role was denied `athena:StartQueryExecution` and needs appropriately scoped permissions for routine queries.
+On AWS, events are sent to Firehose after the DynamoDB transaction and converted to Parquet in S3. Under **Campaigns**, connect and select **Open analytics pipeline**. **Load pipeline** shows Firehose status and up to 20 S3 object metadata entries; the listing reads at most two pages per prefix and labels an incomplete sample. Choose a predefined query and up to 31 UTC arrival dates, click **Run query**, then refresh its status to see results and bytes scanned. Queries never run automatically. Athena scans, S3 requests and stored results incur charges; the template caps each query at 100,000,000 scanned bytes, but a cancelled query can still incur charges. The local demo reports the cloud pipeline as unconfigured rather than simulating AWS.
+
+Athena queries in `backend/analytics.sql` also use projected UTC arrival-date partitions; adjust the example dates before running them. Firehose delivery is buffered for up to 15 minutes under normal conditions and may be delayed or duplicated; DynamoDB remains the live counter source. Provider-generated session IDs last for the provider instance and API URL. Events without a session ID are excluded from the session query. Athena execution was verified previously with an authorized root session; the deployer role was denied `athena:StartQueryExecution`. The new dashboard requires the deployed admin Lambda role and its permissions boundary to permit the scoped Athena, Glue, Firehose and S3 actions in the template.
 
 ## Deploy the full showcase to AWS
 

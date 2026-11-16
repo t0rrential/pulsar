@@ -40,9 +40,9 @@ export function App() {
 | `children` | `ReactNode` | Components using the provider context. |
 | `fingerprintConsent` | `boolean` | Explicit visitor consent to site-scoped fingerprinting; defaults to `false`. |
 
-`fingerprintConsent` is optional and defaults to `false`. Set it to `true` only after the visitor explicitly consents; set it back to `false` when consent is withdrawn. The provider derives an origin-scoped SHA-256 fingerprint from browser characteristics and attaches it to events while consent is enabled. The provider controls this field; callers cannot override it through `track`. Fingerprinting is unavailable when the browser cannot compute the digest.
+`fingerprintConsent` is optional and defaults to `false`. Set it to `true` only after the visitor explicitly consents; set it back to `false` when consent is withdrawn. The provider derives an origin-scoped SHA-256 fingerprint locally from browser characteristics and attaches it, a coarse browser family and a coarse device category to events while consent is enabled. It does not send the raw user agent or fingerprint inputs. The provider controls these fields; callers cannot override them through `track`. Fingerprinting is unavailable when the browser cannot compute the digest.
 
-`useAdFingerprint()` returns the current fingerprint inside an `AdProvider`, or `null` when consent is off, computation is pending, or the browser cannot compute it. Fingerprints are approximate pseudonymous identifiers, not proof of identity. The backend stores associations separately with 30-day TTL; DynamoDB deletes expired records asynchronously. Withdrawal prevents future collection but does not immediately remove prior records. No fingerprint or browser signals are sent to Firehose.
+`useAdFingerprint()` returns the current fingerprint inside an `AdProvider`, or `null` when consent is off, computation is pending, or the browser cannot compute it. Fingerprints are approximate pseudonymous identifiers, not proof of identity. The backend stores associations and the browser/device categories separately with 30-day TTL; DynamoDB deletes expired records asynchronously. Withdrawal prevents future collection but does not immediately remove prior records. No fingerprint, category labels or raw browser signals are sent to Firehose.
 
 Example opt-in integration:
 

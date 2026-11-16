@@ -230,6 +230,10 @@ Resources:
         Variables:
           ADMIN_KEY: !Ref AdminKey
           SITE_BUCKET: !Ref SiteBucket
+          FIREHOSE_STREAM_NAME: !Ref EventStream
+          RAW_EVENTS_BUCKET: !Ref RawEventsBucket
+          ATHENA_WORKGROUP: !Ref AnalyticsWorkGroup
+          ATHENA_DATABASE: !Ref AnalyticsDatabase
       Policies:
         - Statement:
             - Effect: Allow
@@ -238,6 +242,27 @@ Resources:
             - Effect: Allow
               Action: s3:PutObject
               Resource: !Sub '${SiteBucket.Arn}/uploads/*'
+            - Effect: Allow
+              Action: firehose:DescribeDeliveryStream
+              Resource: !GetAtt EventStream.Arn
+            - Effect: Allow
+              Action: [athena:StartQueryExecution, athena:GetQueryExecution, athena:GetQueryResults]
+              Resource: !Sub 'arn:${AWS::Partition}:athena:${AWS::Region}:${AWS::AccountId}:workgroup/${AnalyticsWorkGroup}'
+            - Effect: Allow
+              Action: [s3:ListBucket, s3:GetBucketLocation]
+              Resource: [!GetAtt RawEventsBucket.Arn, !GetAtt QueryResultsBucket.Arn]
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub '${RawEventsBucket.Arn}/events/*'
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject]
+              Resource: !Sub '${QueryResultsBucket.Arn}/results/*'
+            - Effect: Allow
+              Action: [glue:GetDatabase, glue:GetTable, glue:GetPartition, glue:GetPartitions]
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:catalog'
+                - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:database/${AnalyticsDatabase}'
+                - !Sub 'arn:${AWS::Partition}:glue:${AWS::Region}:${AWS::AccountId}:table/${AnalyticsDatabase}/events'
       Events:
         ListCampaigns:
           Type: HttpApi
@@ -251,14 +276,27 @@ Resources:
         CreateCreative:
           Type: HttpApi
           Properties: {ApiId: !Ref HttpApi, Path: '/campaigns/{id}/creatives', Method: POST}
+        FingerprintReport:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: '/campaigns/{id}/fingerprints', Method: GET}
         Upload:
           Type: HttpApi
           Properties: {ApiId: !Ref HttpApi, Path: /uploads, Method: POST}
+        PipelineStatus:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /analytics/pipeline, Method: GET}
+        StartAnalyticsQuery:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /analytics/queries, Method: POST}
+        AnalyticsQueryStatus:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: '/analytics/queries/{id}', Method: GET}
     Metadata:
       com.aws.cloudformation.Context:
-        why: Authenticated administration and short-lived upload URLs for the private site bucket.
+        why: Authenticated administration, bounded analytics exploration, and short-lived upload URLs.
         must:
           - Keep upload permissions confined to the uploads prefix and include this function in the cost guard.
+          - Keep raw events and Athena results private; only predefined queries may be started through the API.
       BuildMethod: esbuild
       BuildProperties:
         Target: es2022
@@ -565,7 +603,7 @@ Resources:
     Type: AWS::Athena::WorkGroup
     Metadata:
       com.aws.cloudformation.Context:
-        why: Separate workgroup enforces encrypted results in the disposable query bucket.
+        why: Separate workgroup caps per-query scanning and enforces encrypted results in the disposable query bucket.
         must:
           - Query and storage charges continue independently of the Lambda cost guard.
     Properties:
@@ -573,6 +611,7 @@ Resources:
       RecursiveDeleteOption: true
       WorkGroupConfiguration:
         EnforceWorkGroupConfiguration: true
+        BytesScannedCutoffPerQuery: 100000000
         ResultConfiguration:
           OutputLocation: !Sub 's3://${QueryResultsBucket}/results/'
           EncryptionConfiguration:

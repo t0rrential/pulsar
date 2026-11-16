@@ -30,7 +30,7 @@ function FingerprintControl({ consent, onChange }: { consent: boolean; onChange:
     <section aria-labelledby="fingerprint-heading" className="mb-6 rounded-lg border bg-card p-4">
       <h2 id="fingerprint-heading" className="text-sm font-semibold">Optional browser fingerprint</h2>
       <p className="mt-2 max-w-3xl text-xs leading-5 text-zinc-500">
-        Allow this publisher site to associate ad events with a pseudonymous, site-scoped fingerprint. The hash is generated locally from browser and device settings; only the hash, browser family and device category are sent, not the underlying settings or raw user agent. Fingerprints are imperfect: browsers can share one and it can change. Records expire after 30 days; deletion may be delayed. Turning this off stops future use but does not delete records already collected or recall events already sent. Ordinary ad tracking continues without it.
+        Allow this publisher site to associate ad events with a pseudonymous, site-scoped fingerprint. The hash is generated locally from browser and device settings. Alongside ordinary ad event data, the browser sends the hash, browser family and device category, but not the underlying settings or raw user agent. Fingerprints are imperfect: browsers can share one and it can change. Records expire after 30 days; deletion may be delayed. Turning this off stops future use but does not delete records already collected or recall events already sent. Ordinary ad tracking continues without it.
       </p>
       <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm font-medium">
         <input type="checkbox" checked={consent} onChange={(event) => { setCopyStatus(''); onChange(event.target.checked); }} />

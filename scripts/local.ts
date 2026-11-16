@@ -11,6 +11,7 @@ import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 const apiPort = Number(process.env.API_PORT || 3001);
 const databasePort = Number(process.env.DB_PORT || 8000);
 const storagePort = Number(process.env.STORAGE_PORT || 9000);
+const webOrigin = process.env.LOCAL_WEB_ORIGIN || 'http://127.0.0.1:5173';
 if (![apiPort, databasePort, storagePort].every((port) => Number.isInteger(port) && port > 0 && port <= 65535)) {
   throw new Error('API_PORT, DB_PORT and STORAGE_PORT must be integers between 1 and 65535.');
 }
@@ -133,7 +134,7 @@ try {
 
   const routes = { 'GET /ad': getAd, 'POST /events': postEvents, 'GET /stats': getStats };
   const api = http.createServer(async (request, response) => {
-    if (request.headers.origin === 'http://127.0.0.1:5173') response.setHeader('Access-Control-Allow-Origin', request.headers.origin);
+    if (request.headers.origin === webOrigin) response.setHeader('Access-Control-Allow-Origin', webOrigin);
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
     response.setHeader('Access-Control-Allow-Headers', 'content-type, x-admin-key');
     response.setHeader('Cache-Control', 'no-store');
@@ -148,7 +149,7 @@ try {
       }
       const routeKey = `${request.method} ${url.pathname}`;
       const handler = routes[routeKey as keyof typeof routes] ??
-        (/^\/campaigns(?:\/[^/]+(?:\/creatives)?)?$/.test(url.pathname) || url.pathname === '/uploads' ? admin : undefined);
+        (/^\/campaigns(?:\/[^/]+(?:\/(?:creatives|fingerprints))?)?$/.test(url.pathname) || url.pathname === '/uploads' || /^\/analytics\/(?:pipeline|queries(?:\/[a-zA-Z0-9-]+)?)$/.test(url.pathname) ? admin : undefined);
       if (!handler) { response.writeHead(404, { 'content-type': 'application/json' }); response.end(JSON.stringify({ error: 'Not found' })); return; }
       const chunks: Buffer[] = [];
       let length = 0;

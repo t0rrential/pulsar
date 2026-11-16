@@ -2,6 +2,8 @@ import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { ArrowUpRight, BarChart3, ImagePlus, KeyRound, Plus, RefreshCw } from 'lucide-react';
 import DashboardStats from './DashboardStats';
+import FingerprintReport from './FingerprintReport';
+import AnalyticsPipeline from './AnalyticsPipeline';
 import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
@@ -139,6 +141,7 @@ export default function Admin({ apiUrl }: { apiUrl: string }) {
       {!connected && !busy && <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">Connect with your admin key to manage campaigns.</div>}
 
       {connected && <>
+        <div className="flex justify-end"><Button type="button" variant="outline" size="sm" onClick={() => document.getElementById('analytics-pipeline')?.scrollIntoView()}>Open analytics pipeline</Button></div>
         <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
           <Card className="min-w-0 gap-0 overflow-hidden py-0">
             <CardHeader className="flex flex-row items-start justify-between gap-4 border-b py-5">
@@ -205,7 +208,9 @@ export default function Admin({ apiUrl }: { apiUrl: string }) {
             <div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Last 7 days / UTC</p><h2 id="performance-heading" className="mt-1 flex items-center gap-2 text-lg font-semibold"><BarChart3 className="size-4 text-muted-foreground" />Campaign performance</h2></div><Button type="button" variant="outline" size="sm" onClick={() => setStatsRefresh((value) => value + 1)}><RefreshCw />Refresh stats</Button></div>
             <DashboardStats apiUrl={apiUrl} campaignId={selected.id} refreshKey={statsRefresh} />
           </section>
+          <FingerprintReport key={selected.id} apiUrl={apiUrl} adminKey={key} campaignId={selected.id} />
         </>}
+        <AnalyticsPipeline apiUrl={apiUrl} adminKey={key} />
       </>}
     </section>
   );

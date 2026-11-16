@@ -6,6 +6,8 @@ import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from '
 import { db, tableName } from '../lib/db.js';
 import { isIdentifier, json } from '../lib/http.js';
 import type { Campaign, Creative } from '../lib/types.js';
+import { fingerprintReport } from './fingerprintReport.js';
+import { handler as analyticsPipeline } from './analyticsPipeline.js';
 
 const s3 = new S3Client({
   ...(process.env.S3_ENDPOINT ? { endpoint: process.env.S3_ENDPOINT } : {}),
@@ -111,7 +113,14 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
   if (!authorized(event)) return json(401, { error: 'Unauthorized' });
   const method = event.requestContext.http.method;
   const path = event.rawPath;
+  if (path === '/analytics/pipeline' || path === '/analytics/queries' || /^\/analytics\/queries\/[a-zA-Z0-9-]+$/.test(path)) {
+    return analyticsPipeline(event);
+  }
   if (path === '/campaigns' && method === 'GET') return json(200, { campaigns: await listCampaigns() });
+  const fingerprintMatch = /^\/campaigns\/([^/]+)\/fingerprints$/.exec(path);
+  if (fingerprintMatch && method === 'GET' && isIdentifier(fingerprintMatch[1])) {
+    return fingerprintReport(fingerprintMatch[1], event.queryStringParameters?.days);
+  }
 
   if (path === '/campaigns' && method === 'POST') {
     const input = campaignInput(bodyOf(event));

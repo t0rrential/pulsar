@@ -63,7 +63,7 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
 | `CAMPAIGN#<id>` | `CREATIVE#<id>` | `imageUrl`, `headline`, `landingUrl`, `width`, `height` |
 | `CAMPAIGN#<id>` | `STATS#<YYYY-MM-DD>` | `requests`, `impressions`, `viewable`, `clicks`, `conversions` |
 | `EVENT#<eventId>` | `EVENT` | Deduplication marker, `expiresAt`, and optional pending Firehose event |
-| `FINGERPRINT#<digest>` | `EVENT#<eventId>` | Consented event association with `expiresAt` |
+| `FINGERPRINT#<digest>` | `EVENT#<eventId>` | Consented event association, optional coarse browser/device categories and `expiresAt` |
 
 - [x] For the prototype, ad selection can **Scan** for `META` items with `status = active` — fine at this size. (A GSI comes later if ever needed.)
 
@@ -108,6 +108,8 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
 **`GET /stats?campaignId=c1&days=7`**
 - [x] `Query` `PK = CAMPAIGN#c1 AND SK BETWEEN STATS#<start> AND STATS#<today>` for the last N UTC days
 - [x] Return `{ "days": [ { "date": "2026-10-17", "requests": 0, "impressions": 0, "viewable": 0, "clicks": 0, "conversions": 0 } ] }`
+- [x] Admin-only campaign fingerprint reports with bounded scans and explicit incomplete-history limitations.
+- [x] Admin-only Firehose/S3 status and predefined, bounded Athena queries; live deployment and permissions require verification.
 
 ### 1.4 Seed script
 
@@ -132,7 +134,7 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
 ### 1.6 Demo app (`demo/`)
 
 - [x] Vite + React + TypeScript app that depends on the workspace package
-- [x] A fake "publisher" page with 2–3 `AdSlot`s in different placements
+- [x] A publisher preview with responsive desktop/mobile controls and live `AdSlot`s.
 - [x] An Overview view with campaign selection and statistics; the current selector is a fixed list of seeded campaigns.
 - [x] API URL from `VITE_API_URL` in `.env`
 
@@ -149,7 +151,7 @@ Goal: the prototype behaves like a real (small) product and is easy to demo and 
 - [x] **Batching:** flush at 10 events, every five seconds, and when the document becomes hidden.
 - [x] **Dedupe:** transactional conditional event insert plus counter update; TTL approximately two days, or 30 days for fingerprinted events.
 - [x] Validate event types, required IDs, and batch size.
-- [x] **Optional fingerprinting:** explicit opt-in, origin-scoped SHA-256, separate DynamoDB associations with 30-day expiry, and no fingerprint in Firehose or S3 analytics. DynamoDB TTL deletion can be delayed; withdrawal does not erase prior records.
+- [x] **Optional fingerprinting:** explicit opt-in, origin-scoped SHA-256, separate DynamoDB associations with 30-day expiry and coarse browser/device labels; no fingerprint or labels in Firehose or S3 analytics. DynamoDB TTL deletion can be delayed; withdrawal does not erase prior records.
 
 ### Hosting & infra
 - [x] Prepare private S3 hosting served by Lambda through API Gateway HTTPS; CloudFront creation is blocked pending account verification
