@@ -11,7 +11,7 @@ A small ad platform on AWS: an exportable React package that shows ads and track
 ## Phase 0 — Setup
 
 - [x] Install tools: Node.js (current LTS), AWS CLI, AWS SAM CLI. Docker is required for the local demo.
-- [x] Configure the non-root `pulsar` deployer role. The last documented deployment used a long-lived `pulsar-iam` source key; replace it with short-lived credentials and deactivate the key after verifying the replacement. A root session was used for the separately documented Athena verification; do not use root for routine deployment.
+- [x] Configure the non-root `pulsar` deployer role. The last documented deployment used a long-lived `pulsar-iam` source key; replace it with short-lived credentials and deactivate the key after verifying the replacement. A temporary authorized root session updated the admin Lambda permissions boundary; routine deployment uses the non-root role.
 - [x] Deploy the account-wide $5/month gross-spend Budget with email/SNS notifications at $4 and $5. Verified configured subscribers and a live shutdown-handler invocation; real spend-triggered delivery remains untested. This is not a hard spending cap.
 - [x] Create the repo as an npm workspaces monorepo:
 
@@ -160,7 +160,7 @@ Goal: the prototype behaves like a real (small) product and is easy to demo and 
 - [x] Prepare full static-site deployment and browser cache policies (short HTML, immutable fingerprinted assets, one-hour SVGs)
 - [x] Prepare seven-day logs, the account-wide gross $5 monthly budget, and SNS-triggered zero-concurrency shutdown for website and API functions
 - [x] Verify the earlier Phase 1 site, API, configured budget subscribers and shutdown-handler effects in AWS; real spend-triggered notification delivery remains untested.
-- [ ] Complete remaining AWS checks. CloudFormation reports `UPDATE_COMPLETE`; live dashboard, ad serving, event counters, admin authentication, image upload and the Firehose → Parquet → Athena path were checked. Athena query execution required an authorized root session; the deployer role was denied access. Teardown remains unverified.
+- [ ] Complete remaining AWS checks. CloudFormation reports `UPDATE_COMPLETE`; the live dashboard, ad serving, event counters, admin authentication, image upload, consented fingerprint report and dashboard-driven Firehose → S3 → Athena path were checked. The admin Lambda runs scoped analytics queries; the deployer itself was denied direct Athena query execution. Updated-stack teardown and real spend-triggered notification delivery remain unverified.
 
 ### Package polish
 - [x] Props: `className`, `onLoad`, `onNoFill`, `onClick` callbacks on `AdSlot`.
@@ -181,7 +181,7 @@ Goal: the prototype behaves like a real (small) product and is easy to demo and 
 
 ## Phase 3 — Stretch goals (only after Phase 2)
 
-Admin flows were exercised locally. The AWS admin and analytics resources are deployed; admin authentication, image upload and the Firehose → Parquet → Athena path were checked.
+Admin and analytics flows were exercised locally and on the deployed showcase. Live verification included admin authentication, image upload, consented fingerprint reporting, Firehose status, S3 object listing, and an Athena query initiated from the dashboard.
 
 ### A. Admin page
 - [x] Campaign administration endpoints.
@@ -203,6 +203,7 @@ Admin flows were exercised locally. The AWS admin and analytics resources are de
 - [ ] Add independent retry or recovery for pending Firehose records; current recovery depends on a client retry with the same event ID.
 - [ ] Replace the local long-lived IAM source key with verified short-lived credentials, and harden admin access and image uploads before broader use.
 - [ ] Avoid overwriting seeded campaign definitions when deploying to an existing showcase.
+- [ ] Replace the fingerprint report's bounded table scan with a scalable access pattern before traffic grows; it fails rather than reporting partial counts when the scan limit is reached.
 
 ---
 

@@ -37,6 +37,16 @@ The browser hashes the page origin, user agent, language, platform, hardware con
 
 Fingerprint associations are stored separately in DynamoDB under `PK = FINGERPRINT#<fingerprint>` and `SK = EVENT#<eventId>`, with `expiresAt` set 30 days after ingestion. After connecting under **Campaigns**, select a campaign and scroll to **Browser fingerprints** for approximate distinct fingerprints, daily events, first observed versus previously seen within retained history, and the latest hashes with coarse browser/device labels. Older associations have unknown labels. The 30-day view has no earlier comparison window, so returning is zero. The report ignores expired rows and scans at most 10,000 table items; it fails rather than presenting partial counts when this limit is exceeded, and displays at most 200 fingerprints. DynamoDB TTL deletion is asynchronous and can occur after expiry. Withdrawing consent stops future collection but does not immediately delete existing associations or recall events already sent. Fingerprints, browser/device labels and raw input signals are not sent to Firehose or stored in S3 analytics history.
 
+### Try fingerprint reporting
+
+1. In **Publisher preview**, enable **Allow fingerprinting on this site** only if you consent to the collection described above. Copy the displayed digest if you want to find your own row.
+2. Select **Refresh ads** and allow a few seconds for the event batch to be sent. A filled ad generates real activity; no-fill responses do not create an impression.
+3. Open **Campaigns**, enter the admin key, select the campaign that served the ad, and scroll to **Browser fingerprints**. For the default seeded banner, select **Find your next adventure** (`c3`). Use **Refresh** if its event is not yet visible.
+4. The table displays the digest, coarse browser and device, last-seen time and event count. Select **Last 7 days** or **Last 30 days**; the report only covers activity within its retained history.
+5. Turn the consent checkbox off when finished. This prevents future fingerprint collection but does not erase existing records.
+
+The local demo uses `local-admin`; the live key is held privately by the operator. Do not show or share the key during a recording. The live report includes shared, real activity, not the local synthetic history.
+
 ## Workspace
 
 - `backend/template.yaml`: API, admin and static-site Lambdas, DynamoDB, private S3, Firehose, Glue, Athena, budget notifications and a shutdown Lambda.
@@ -48,7 +58,7 @@ Fingerprint associations are stored separately in DynamoDB under `PK = FINGERPRI
 - `scripts/deploy-showcase.ts` and `scripts/delete-showcase.ts`: explicit-profile deployment and confirmation-gated teardown; updated-stack teardown has not been exercised on AWS.
 - `backend/analytics.sql`: Athena queries over buffered raw events.
 
-The optional `presentation/` directory is ignored by Git. Its midpoint slides, PDFs, and generated reading scripts are historical snapshots; the local `presentation/demo-script.md` is a current walkthrough when present.
+The optional `presentation/` directory is ignored by Git. When present locally, `demo-script.md` is the live walkthrough, `current-script.md` is the matching slide narration, and `pulsar-current.pdf` / `pulsar-current.pptx` are the current deck. The `pulsar-midpoint` slides and older graphs are historical snapshots. Presentation files are not included in a clone unless distributed separately.
 
 ## React package
 
