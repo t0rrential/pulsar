@@ -17,6 +17,7 @@ export interface AdEvent {
   creativeId: string;
   placement: string;
   sessionId?: string;
+  fingerprint?: string;
   ts: number;
 }
 

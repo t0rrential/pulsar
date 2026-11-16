@@ -34,6 +34,87 @@ test('rejects invalid session identifiers', async () => {
   } finally { db.send = original; }
 });
 
+test('rejects malformed fingerprints before writing any event', async () => {
+  const original = db.send;
+  let writes = 0;
+  db.send = (async () => { writes++; return {}; }) as typeof db.send;
+  try {
+    for (const fingerprint of [null, 42, '', 'a'.repeat(63), 'a'.repeat(65), 'A'.repeat(64), 'g'.repeat(64), `${'a'.repeat(63)}\n`, {}]) {
+      assert.equal((await postEvents(request([sample, { ...sample, fingerprint }]))).statusCode, 400);
+    }
+    assert.equal(writes, 0);
+  } finally { db.send = original; }
+});
+
+test('stores a fingerprint association atomically and never refreshes it on duplicate events', async () => {
+  const originalDb = db.send;
+  const originalNow = Date.now;
+  const originalStream = process.env.FIREHOSE_STREAM_NAME;
+  delete process.env.FIREHOSE_STREAM_NAME;
+  const fingerprint = '0123456789abcdef'.repeat(4);
+  const incoming = { ...sample, sessionId: 'session-1', fingerprint };
+  let now = 1_760_000_000_000;
+  let stored: Record<string, unknown> | undefined;
+  let association: Record<string, unknown> | undefined;
+  let count = 0;
+  Date.now = () => now;
+  db.send = (async (command: TransactWriteCommand | GetCommand) => {
+    if (command instanceof TransactWriteCommand) {
+      if (stored) throw Object.assign(new Error('duplicate'), { name: 'TransactionCanceledException' });
+      const operations = command.input.TransactItems!;
+      assert.equal(operations.length, 3);
+      assert.equal(operations[0]?.Put?.ConditionExpression, 'attribute_not_exists(PK)');
+      assert.equal(operations[1]?.Update?.ExpressionAttributeNames?.['#counter'], 'viewable');
+      stored = operations[0]?.Put?.Item;
+      association = operations[2]?.Put?.Item;
+      count++;
+      return {};
+    }
+    if (command instanceof GetCommand) return { Item: stored };
+    throw new Error('unexpected command');
+  }) as typeof db.send;
+  try {
+    assert.equal((await postEvents(request([incoming]))).statusCode, 202);
+    assert.deepEqual(association, {
+      PK: `FINGERPRINT#${fingerprint}`, SK: 'EVENT#event-1',
+      eventId: 'event-1', campaignId: 'campaign-1', creativeId: 'creative-1',
+      type: 'viewable', placement: 'sidebar', ts: 1760678400000,
+      sessionId: 'session-1', expiresAt: 1762592000,
+    });
+    assert.ok(!JSON.stringify(stored).includes(fingerprint));
+    assert.equal((stored as Record<string, unknown> | undefined)?.expiresAt, 1762592000);
+    now += 86_400_000;
+    assert.equal((await postEvents(request([{ ...incoming, fingerprint: 'f'.repeat(64) }]))).statusCode, 202);
+    assert.equal(count, 1);
+    assert.equal((association as Record<string, unknown> | undefined)?.expiresAt, 1762592000);
+  } finally {
+    db.send = originalDb;
+    Date.now = originalNow;
+    if (originalStream === undefined) delete process.env.FIREHOSE_STREAM_NAME;
+    else process.env.FIREHOSE_STREAM_NAME = originalStream;
+  }
+});
+
+test('stores a fingerprint association without a session when none is supplied', async () => {
+  const original = db.send;
+  const originalStream = process.env.FIREHOSE_STREAM_NAME;
+  delete process.env.FIREHOSE_STREAM_NAME;
+  db.send = (async (command: TransactWriteCommand) => {
+    assert.ok(command instanceof TransactWriteCommand);
+    const association = command.input.TransactItems![2]!.Put!.Item!;
+    assert.equal(association.PK, `FINGERPRINT#${'b'.repeat(64)}`);
+    assert.equal('sessionId' in association, false);
+    return {};
+  }) as typeof db.send;
+  try {
+    assert.equal((await postEvents(request([{ ...sample, fingerprint: 'b'.repeat(64) }]))).statusCode, 202);
+  } finally {
+    db.send = original;
+    if (originalStream === undefined) delete process.env.FIREHOSE_STREAM_NAME;
+    else process.env.FIREHOSE_STREAM_NAME = originalStream;
+  }
+});
+
 test('conversion events increment the conversions counter', async () => {
   const original = db.send;
   db.send = (async (command: TransactWriteCommand) => {
@@ -54,6 +135,7 @@ test('deduplicates an event and increments its viewable counter in one transacti
     if (command instanceof TransactWriteCommand) {
       if (stored) throw Object.assign(new Error('duplicate'), { name: 'TransactionCanceledException' });
       const operations = command.input.TransactItems!;
+      assert.equal(operations.length, 2);
       assert.equal(operations[0]?.Put?.ConditionExpression, 'attribute_not_exists(PK)');
       assert.equal(operations[1]?.Update?.ExpressionAttributeNames?.['#counter'], 'viewable');
       stored = operations[0]?.Put?.Item;
@@ -87,6 +169,8 @@ test('retries pending Firehose delivery without incrementing the counter again',
   const originalFirehose = FirehoseClient.prototype.send;
   const originalStream = process.env.FIREHOSE_STREAM_NAME;
   process.env.FIREHOSE_STREAM_NAME = 'events';
+  const fingerprint = 'a'.repeat(64);
+  const incoming = { ...sample, fingerprint };
   let stored: Record<string, unknown> | undefined;
   let count = 0;
   let attempts = 0;
@@ -94,6 +178,8 @@ test('retries pending Firehose delivery without incrementing the counter again',
     if (command instanceof TransactWriteCommand) {
       if (stored) throw Object.assign(new Error('duplicate'), { name: 'TransactionCanceledException' });
       stored = { ...command.input.TransactItems![0]!.Put!.Item };
+      assert.deepEqual(stored.event, sample);
+      assert.ok(!JSON.stringify(stored).includes(fingerprint));
       count++;
       return {};
     }
@@ -114,8 +200,8 @@ test('retries pending Firehose delivery without incrementing the counter again',
       : { FailedPutCount: 0, RequestResponses: [{ RecordId: 'record-1' }] };
   }) as typeof FirehoseClient.prototype.send;
   try {
-    assert.equal((await postEvents(request([sample]))).statusCode, 503);
-    assert.equal((await postEvents(request([sample]))).statusCode, 202);
+    assert.equal((await postEvents(request([incoming]))).statusCode, 503);
+    assert.equal((await postEvents(request([incoming]))).statusCode, 202);
     assert.equal(count, 1);
     assert.equal(attempts, 2);
   } finally {

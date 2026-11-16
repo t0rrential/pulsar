@@ -10,6 +10,9 @@ const campaigns: Campaign[] = [
   { PK: 'CAMPAIGN#c1', SK: 'META', name: 'Weekend escapes', status: 'active', placements: ['sidebar'], weight: 3 },
   { PK: 'CAMPAIGN#c2', SK: 'META', name: 'Outside every day', status: 'active', placements: ['sidebar'], weight: 2 },
   { PK: 'CAMPAIGN#c3', SK: 'META', name: 'Find your next adventure', status: 'active', placements: ['banner'], weight: 1 },
+  { PK: 'CAMPAIGN#c4', SK: 'META', name: 'Morning rituals', status: 'active', placements: ['sidebar'], weight: 2 },
+  { PK: 'CAMPAIGN#c5', SK: 'META', name: 'City discoveries', status: 'paused', placements: ['sidebar'], weight: 1 },
+  { PK: 'CAMPAIGN#c6', SK: 'META', name: 'Explore further', status: 'paused', placements: ['banner'], weight: 1 },
 ];
 
 const creatives: Creative[] = [
@@ -42,6 +45,24 @@ const creatives: Creative[] = [
     imageUrl: `${creativeBaseUrl}/explore.svg`,
     headline: 'A new view is closer than you think',
     landingUrl: 'https://www.nps.gov/subjects/camping/index.htm', width: 728, height: 90,
+  },
+  {
+    PK: 'CAMPAIGN#c4', SK: 'CREATIVE#cr1',
+    imageUrl: `${creativeBaseUrl}/escape.svg`,
+    headline: 'Start your morning somewhere new',
+    landingUrl: 'https://www.nps.gov/findapark/index.htm', width: 300, height: 250,
+  },
+  {
+    PK: 'CAMPAIGN#c5', SK: 'CREATIVE#cr1',
+    imageUrl: `${creativeBaseUrl}/outside.svg`,
+    headline: 'Find a little green in your day',
+    landingUrl: 'https://www.nps.gov/subjects/urban/index.htm', width: 300, height: 250,
+  },
+  {
+    PK: 'CAMPAIGN#c6', SK: 'CREATIVE#cr1',
+    imageUrl: `${creativeBaseUrl}/explore.svg`,
+    headline: 'There is more to explore',
+    landingUrl: 'https://www.nps.gov/planyourvisit/index.htm', width: 728, height: 90,
   },
 ];
 

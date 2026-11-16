@@ -34,6 +34,10 @@ export function App() {
 
 `apiUrl` is the API base URL; `children` contains components using the package. Events are queued and sent at 10 events, every five seconds, when the document becomes hidden, and on provider unmount or URL change. Ordinary batches use `fetch` with `keepalive`; failed responses and network errors are requeued with the same event IDs for a later flush while the provider remains mounted. On hidden or unmount the package prefers a plain-string `sendBeacon`, falling back to `fetch`. Browsers do not expose beacon responses, and queues are in memory, so delivery across page exit or a failed final send cannot be guaranteed.
 
+`fingerprintConsent` is optional and defaults to `false`. Set it to `true` only after the visitor explicitly consents; set it back to `false` when consent is withdrawn. The provider derives an origin-scoped SHA-256 fingerprint from browser characteristics and attaches it to events while consent is enabled. The provider controls this field; callers cannot override it through `track`. Fingerprinting is unavailable when the browser cannot compute the digest.
+
+`useAdFingerprint()` returns the current fingerprint inside an `AdProvider`, or `null` when consent is off, computation is pending, or the browser cannot compute it. Fingerprints are approximate pseudonymous identifiers, not proof of identity. The backend stores associations separately with 30-day TTL; DynamoDB deletes expired records asynchronously. Withdrawal prevents future collection but does not immediately remove prior records. No fingerprint or browser signals are sent to Firehose.
+
 ## AdSlot
 
 | Prop | Type | Description |

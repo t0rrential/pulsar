@@ -17,6 +17,8 @@ export interface AdEvent {
   creativeId: string;
   placement: string;
   sessionId?: string;
+  /** SHA-256 site-scoped pseudonymous fingerprint, when consented and available. */
+  fingerprint?: string;
   ts: number;
 }
 

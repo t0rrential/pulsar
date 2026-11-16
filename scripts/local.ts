@@ -4,6 +4,7 @@ import { once } from 'node:events';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { CreateTableCommand, DynamoDBClient, ListTablesCommand } from '@aws-sdk/client-dynamodb';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { CreateBucketCommand, GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 
@@ -108,6 +109,27 @@ try {
     import('./seed.ts'),
   ]);
   await seed();
+
+  // Synthetic history is confined to this disposable local database.
+  const localDb = DynamoDBDocumentClient.from(client);
+  const today = new Date();
+  today.setUTCHours(0, 0, 0, 0);
+  const activity = [0.62, 0.76, 0.69, 0.88, 0.81, 1, 0.54];
+  for (let campaign = 1; campaign <= 6; campaign++) {
+    for (let day = 0; day < activity.length; day++) {
+      const date = new Date(today.getTime() - (activity.length - 1 - day) * 86_400_000).toISOString().slice(0, 10);
+      const impressions = Math.round((95 + campaign * 31) * activity[day]!);
+      const requests = impressions + Math.round(impressions * 0.12);
+      const viewable = Math.round(impressions * (0.68 + campaign * 0.02));
+      const clicks = Math.round(impressions * (0.025 + campaign * 0.003));
+      const conversions = Math.floor(clicks / 4);
+      await localDb.send(new PutCommand({
+        TableName: process.env.TABLE_NAME,
+        Item: { PK: `CAMPAIGN#c${campaign}`, SK: `STATS#${date}`, requests, impressions, viewable, clicks, conversions },
+      }));
+    }
+  }
+  console.log('Loaded seven days of synthetic sample statistics into the disposable local database.');
 
   const routes = { 'GET /ad': getAd, 'POST /events': postEvents, 'GET /stats': getStats };
   const api = http.createServer(async (request, response) => {

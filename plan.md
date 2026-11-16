@@ -10,7 +10,7 @@ A small ad platform on AWS: an exportable React package that shows ads and track
 
 ## Phase 0 — Setup
 
-- [x] Install tools: Node.js (current LTS), AWS CLI, AWS SAM CLI. Docker is optional (only needed for `sam local`).
+- [x] Install tools: Node.js (current LTS), AWS CLI, AWS SAM CLI. Docker is required for the local demo.
 - [x] Configure non-root AWS profile `pulsar` (temporary `credential_process` credentials); bootstrap keys deleted, root profile not used for deployment.
 - [x] Deploy the account-wide $5/month gross-spend Budget with email/SNS notifications at $4 and $5. Verified configured subscribers and a live shutdown-handler invocation; real spend-triggered delivery remains untested. This is not a hard spending cap.
 - [x] Create the repo as an npm workspaces monorepo:
@@ -154,7 +154,8 @@ Goal: the prototype behaves like a real (small) product and is easy to demo and 
 - [x] Same-origin website/API; cross-origin CORS permits only the local demo
 - [x] Prepare full static-site deployment and browser cache policies (short HTML, immutable fingerprinted assets, one-hour SVGs)
 - [x] Prepare seven-day logs, the account-wide gross $5 monthly budget, and SNS-triggered zero-concurrency shutdown for website and API functions
-- [x] Deploy and verify the site, API, configured budget subscribers and shutdown-handler effects in AWS; real spend-triggered notification delivery remains untested
+- [x] Verify the earlier Phase 1 site, API, configured budget subscribers and shutdown-handler effects in AWS; real spend-triggered notification delivery remains untested.
+- [ ] Complete remaining AWS checks. CloudFormation reports `UPDATE_COMPLETE`; live dashboard, ad serving, event counters, admin authentication, image upload and the Firehose → Parquet → Athena path were checked. Athena query execution required an authorized root session; the deployer role was denied access. Teardown remains unverified.
 
 ### Package polish
 - [x] Props: `className`, `onLoad`, `onNoFill`, `onClick` callbacks on `AdSlot`.
@@ -164,7 +165,7 @@ Goal: the prototype behaves like a real (small) product and is easy to demo and 
 - [x] Package README with usage and props.
 
 ### Demo tooling
-- [x] Keep counters tied to real requests, rendered impressions and clicks; seeding preserves counters and creates no fake history
+- [x] Keep cloud counters tied to real requests, rendered impressions and clicks; the disposable local runner supplies labelled synthetic history for demos.
 - [x] Update the project README with local-only operation, full-site deploy/seed, `c3` click demo, cost limitations, manual recovery and confirmed teardown
 - [x] Prepare `npm run showcase:delete -- --confirm`: non-root check, exact stack site-bucket emptying, stack deletion and wait; retain artifact bucket and IAM access
 - [ ] Verify cloud teardown against the deployed stack when its real counters/assets are no longer needed
@@ -175,7 +176,7 @@ Goal: the prototype behaves like a real (small) product and is easy to demo and 
 
 ## Phase 3 — Stretch goals (only after Phase 2)
 
-Admin flows were exercised locally. The new AWS resources and raw-event delivery have not been deployed or verified.
+Admin flows were exercised locally. The AWS admin and analytics resources are deployed; admin authentication, image upload and the Firehose → Parquet → Athena path were checked.
 
 ### A. Admin page
 - [x] Campaign administration endpoints.

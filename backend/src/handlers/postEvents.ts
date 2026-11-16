@@ -13,6 +13,7 @@ const counters: Record<AdEvent['type'], string> = {
   conversion: 'conversions',
 };
 const eventKey = (eventId: string) => ({ PK: `EVENT#${eventId}`, SK: 'EVENT' });
+const fingerprintRetentionSeconds = 30 * 24 * 60 * 60;
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> {
   if (!event.body || event.body.length > 90_000) {
@@ -46,6 +47,8 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!isIdentifier(item.eventId) || !isIdentifier(item.impressionId) ||
         !isIdentifier(item.campaignId) || !isIdentifier(item.creativeId) ||
         !isIdentifier(item.placement) || (item.sessionId !== undefined && !isIdentifier(item.sessionId)) ||
+        (item.fingerprint !== undefined &&
+          (typeof item.fingerprint !== 'string' || item.fingerprint.length !== 64 || !/^[0-9a-f]{64}$/.test(item.fingerprint))) ||
         !['impression', 'click', 'viewable', 'conversion'].includes(item.type ?? '') ||
         typeof item.ts !== 'number' || !Number.isInteger(item.ts) ||
         item.ts < 0 || item.ts > 253_402_300_799_999) {
@@ -55,21 +58,24 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       eventId: item.eventId, impressionId: item.impressionId, campaignId: item.campaignId,
       creativeId: item.creativeId, placement: item.placement, type: item.type!, ts: item.ts,
       ...(item.sessionId ? { sessionId: item.sessionId } : {}),
+      ...(item.fingerprint !== undefined ? { fingerprint: item.fingerprint } : {}),
     });
   }
 
   const stream = process.env.FIREHOSE_STREAM_NAME;
-  const pending = new Map<string, AdEvent>();
-  for (const item of events) {
+  const pending = new Map<string, Omit<AdEvent, 'fingerprint'>>();
+  for (const incoming of events) {
+    const { fingerprint, ...item } = incoming;
     const key = eventKey(item.eventId);
     const date = new Date(item.ts).toISOString().slice(0, 10);
+    const ingestedAt = Math.floor(Date.now() / 1000);
     try {
       await db.send(new TransactWriteCommand({
         TransactItems: [
           {
             Put: {
               TableName: tableName,
-              Item: { ...key, expiresAt: Math.floor(Date.now() / 1000) + 172_800, ...(stream ? { firehosePending: true, event: item } : {}) },
+              Item: { ...key, expiresAt: ingestedAt + (fingerprint ? fingerprintRetentionSeconds : 172_800), ...(stream ? { firehosePending: true, event: item } : {}) },
               ConditionExpression: 'attribute_not_exists(PK)',
             },
           },
@@ -82,6 +88,19 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
               ExpressionAttributeValues: { ':one': 1 },
             },
           },
+          ...(fingerprint ? [{
+            Put: {
+              TableName: tableName,
+              Item: {
+                PK: `FINGERPRINT#${fingerprint}`, SK: `EVENT#${item.eventId}`,
+                eventId: item.eventId, campaignId: item.campaignId, creativeId: item.creativeId,
+                type: item.type, placement: item.placement, ts: item.ts,
+                ...(item.sessionId ? { sessionId: item.sessionId } : {}),
+                expiresAt: ingestedAt + fingerprintRetentionSeconds,
+              },
+              ConditionExpression: 'attribute_not_exists(PK)',
+            },
+          }] : []),
         ],
       }));
       if (stream) pending.set(item.eventId, item);
@@ -90,7 +109,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       const existing = await db.send(new GetCommand({ TableName: tableName, Key: key, ConsistentRead: true }));
       if (!existing.Item) throw error;
       if (stream && existing.Item.firehosePending && existing.Item.event) {
-        pending.set(item.eventId, existing.Item.event as AdEvent);
+        pending.set(item.eventId, existing.Item.event as Omit<AdEvent, 'fingerprint'>);
       }
     }
   }
