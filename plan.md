@@ -11,7 +11,7 @@ A small ad platform on AWS: an exportable React package that shows ads and track
 ## Phase 0 — Setup
 
 - [x] Install tools: Node.js (current LTS), AWS CLI, AWS SAM CLI. Docker is required for the local demo.
-- [x] Configure non-root AWS profile `pulsar` (temporary `credential_process` credentials); bootstrap keys deleted, root profile not used for deployment.
+- [x] Configure the non-root `pulsar` deployer role. The last documented deployment used a long-lived `pulsar-iam` source key; replace it with short-lived credentials and deactivate the key after verifying the replacement. A root session was used for the separately documented Athena verification; do not use root for routine deployment.
 - [x] Deploy the account-wide $5/month gross-spend Budget with email/SNS notifications at $4 and $5. Verified configured subscribers and a live shutdown-handler invocation; real spend-triggered delivery remains untested. This is not a hard spending cap.
 - [x] Create the repo as an npm workspaces monorepo:
 
@@ -39,14 +39,14 @@ ad-platform/
 
 Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counter, and the stats component shows the numbers. Ugly is fine.
 
-**Implementation status:** deployed AWS showcase at https://uhroesgpkb.execute-api.us-east-1.amazonaws.com/. Browser verification loaded all three ads, opened the advertiser link, and observed `c3` clicks increase from 0 to 1. Non-root CLI/MCP access is verified. The live shutdown handler stopped all four serving functions (HTTP 503); service was restored (HTTP 200). CloudFront requires account verification, so private S3 assets are served by Lambda through API Gateway HTTPS. Teardown and real spend-triggered notification delivery have not been exercised.
+**Implementation status:** deployed AWS showcase at https://uhroesgpkb.execute-api.us-east-1.amazonaws.com/. Browser verification loaded ads, opened the advertiser link, and observed a `c3` click increase. An earlier shutdown-handler test stopped the four then-existing serving functions; service was restored. CloudFront requires account verification, so private S3 assets are served by Lambda through API Gateway HTTPS. Updated-stack teardown and real spend-triggered notification delivery have not been exercised.
 
 ### 1.1 Backend: SAM stack
 
 - [x] `template.yaml` with:
   - [x] One DynamoDB table `AdPlatform` (on-demand billing), keys `PK` (string) and `SK` (string)
   - [x] An `AWS::Serverless::HttpApi` serving the same-origin HTTPS website and API; cross-origin CORS permits only the local demo
-  - [x] Three functions (Node.js runtime, `BuildMethod: esbuild` so TypeScript just works), each with a DynamoDB policy scoped to the table:
+  - [x] Node.js functions (`BuildMethod: esbuild`); the core ad API includes:
     - `GetAdFunction` → `GET /ad`
     - `PostEventsFunction` → `POST /events`
     - `GetStatsFunction` → `GET /stats`
@@ -61,7 +61,9 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
 |---|---|---|
 | `CAMPAIGN#<id>` | `META` | `name`, `status` (`active`/`paused`), `placements` (list), `weight` (number) |
 | `CAMPAIGN#<id>` | `CREATIVE#<id>` | `imageUrl`, `headline`, `landingUrl`, `width`, `height` |
-| `CAMPAIGN#<id>` | `STATS#<YYYY-MM-DD>` | `requests`, `impressions`, `clicks` (numbers) |
+| `CAMPAIGN#<id>` | `STATS#<YYYY-MM-DD>` | `requests`, `impressions`, `viewable`, `clicks`, `conversions` |
+| `EVENT#<eventId>` | `EVENT` | Deduplication marker, `expiresAt`, and optional pending Firehose event |
+| `FINGERPRINT#<digest>` | `EVENT#<eventId>` | Consented event association with `expiresAt` |
 
 - [x] For the prototype, ad selection can **Scan** for `META` items with `status = active` — fine at this size. (A GSI comes later if ever needed.)
 
@@ -91,7 +93,7 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
 ```json
 {
   "eventId": "uuid",
-  "type": "impression | click",
+  "type": "impression",
   "impressionId": "uuid",
   "campaignId": "c1",
   "creativeId": "cr1",
@@ -99,17 +101,17 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
   "ts": 1760678400000
 }
 ```
-- [x] For each event, `UpdateItem` with `ADD impressions :one` (or `clicks`) on `STATS#<date>`
+- [x] Atomically insert a deduplication marker and increment the matching daily counter; optionally write a separate consented fingerprint association.
 - [x] Parse the body even if `Content-Type` is `text/plain` (see the `sendBeacon` note in 1.5)
 - [x] Return `202`
 
 **`GET /stats?campaignId=c1&days=7`**
 - [x] `Query` `PK = CAMPAIGN#c1 AND SK BETWEEN STATS#<start> AND STATS#<today>` for the last N UTC days
-- [x] Return `{ "days": [ { "date": "2026-10-17", "requests": 0, "impressions": 0, "clicks": 0 } ] }`
+- [x] Return `{ "days": [ { "date": "2026-10-17", "requests": 0, "impressions": 0, "viewable": 0, "clicks": 0, "conversions": 0 } ] }`
 
 ### 1.4 Seed script
 
-- [x] `scripts/seed.ts` using AWS SDK v3 (`@aws-sdk/lib-dynamodb`) to insert 3 campaigns with 1–2 creatives each
+- [x] `scripts/seed.ts` inserts six fixed campaigns and eight creatives. It preserves counters but overwrites those seeded definitions on each run.
 - [x] Original SVG creatives in `demo/public/creatives`; local seed defaults to the local site's `/creatives`, cloud seed uses `<SiteUrl>/creatives`
 
 ### 1.5 React package (`packages/react-ads`)
@@ -122,8 +124,8 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
   - [x] Fire an `impression` event when the ad renders (viewability comes in Phase 2)
   - [x] On click: fire a `click` event, then open `landingUrl`
   - [x] Guard against React StrictMode effect replay with a per-slot request promise and impression ref so you don't double-fetch and double-count
-- [x] `<AdStats campaignId="c1" days={7} />` — fetch `/stats` and render a simple table
-- [x] Sending events: `navigator.sendBeacon(url, JSON.stringify(body))`, falling back to `fetch(..., { keepalive: true })`
+- [x] `<AdStats campaignId="c1" days={7} />` — fetch `/stats` and render totals, a chart, and a daily table.
+- [x] Send ordinary batches with keepalive `fetch`; on hidden or unmount, prefer `navigator.sendBeacon` and fall back to keepalive `fetch`.
   - Note: send the body as a **plain string**, not a `Blob` with `application/json`. Browsers restrict cross-origin beacons with non-simple content types, so the API should accept `text/plain` and `JSON.parse` it.
 - [x] Generate `eventId` with `crypto.randomUUID()`
 
@@ -131,7 +133,7 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
 
 - [x] Vite + React + TypeScript app that depends on the workspace package
 - [x] A fake "publisher" page with 2–3 `AdSlot`s in different placements
-- [x] A `/stats` page (or section) with `AdStats` for each campaign
+- [x] An Overview view with campaign selection and statistics; the current selector is a fixed list of seeded campaigns.
 - [x] API URL from `VITE_API_URL` in `.env`
 
 **Phase 1 done when:** load the demo page → ads appear from DynamoDB → click one → refresh stats → the click count went up.
@@ -145,8 +147,9 @@ Goal: the prototype behaves like a real (small) product and is easy to demo and 
 ### Tracking accuracy
 - [x] **Viewable impressions:** `IntersectionObserver` at 50% for one continuous second; count `viewable`.
 - [x] **Batching:** flush at 10 events, every five seconds, and when the document becomes hidden.
-- [x] **Dedupe:** transactional conditional event insert plus counter update; TTL approximately two days.
+- [x] **Dedupe:** transactional conditional event insert plus counter update; TTL approximately two days, or 30 days for fingerprinted events.
 - [x] Validate event types, required IDs, and batch size.
+- [x] **Optional fingerprinting:** explicit opt-in, origin-scoped SHA-256, separate DynamoDB associations with 30-day expiry, and no fingerprint in Firehose or S3 analytics. DynamoDB TTL deletion can be delayed; withdrawal does not erase prior records.
 
 ### Hosting & infra
 - [x] Prepare private S3 hosting served by Lambda through API Gateway HTTPS; CloudFront creation is blocked pending account verification
@@ -166,7 +169,7 @@ Goal: the prototype behaves like a real (small) product and is easy to demo and 
 
 ### Demo tooling
 - [x] Keep cloud counters tied to real requests, rendered impressions and clicks; the disposable local runner supplies labelled synthetic history for demos.
-- [x] Update the project README with local-only operation, full-site deploy/seed, `c3` click demo, cost limitations, manual recovery and confirmed teardown
+- [x] Update the project README with local-only operation, full-site deploy/seed, the `c3` click demo, cost limitations, manual recovery and confirmation-gated teardown.
 - [x] Prepare `npm run showcase:delete -- --confirm`: non-root check, exact stack site-bucket emptying, stack deletion and wait; retain artifact bucket and IAM access
 - [ ] Verify cloud teardown against the deployed stack when its real counters/assets are no longer needed
 
@@ -191,6 +194,13 @@ Admin flows were exercised locally. The AWS admin and analytics resources are de
 - [x] `POST /events` sends accepted events to Firehose.
 - [x] Example queries for creative CTR, hourly impressions, placements and provider sessions.
 - [x] Document delayed delivery and DynamoDB as the live counter source.
+
+### Remaining improvements
+- [ ] Populate Overview's campaign selector from live campaign data; campaigns created in administration do not automatically appear there.
+- [ ] Avoid false no-fill when the selected active campaign has no valid creative but another campaign is eligible.
+- [ ] Add independent retry or recovery for pending Firehose records; current recovery depends on a client retry with the same event ID.
+- [ ] Replace the local long-lived IAM source key with verified short-lived credentials, and harden admin access and image uploads before broader use.
+- [ ] Avoid overwriting seeded campaign definitions when deploying to an existing showcase.
 
 ---
 

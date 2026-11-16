@@ -3,6 +3,10 @@
 -- dt predicate to limit scans; adjust the sample range to cover late arrivals.
 -- Delivery is buffered for up to 15 minutes under normal conditions; errors
 -- and retries can delay it further. DynamoDB remains the live counter source.
+-- Fingerprints are deliberately omitted from Firehose and this S3/Athena table.
+-- Consented fingerprint associations are separate DynamoDB records with 30-day TTL.
+-- The January 2026 dates below are examples; replace them with the arrival dates
+-- you need before running a query.
 
 -- CTR by creative (event counts, not distinct people).
 SELECT creativeid, count_if(type = 'impression') AS impressions,

@@ -15,7 +15,7 @@ npm run dev
 
 Open **http://127.0.0.1:5173**. The API listens at `http://localhost:3001`, DynamoDB Local at `127.0.0.1:8000`, and S3Mock at `127.0.0.1:9000`. Set `API_PORT`, `DB_PORT`, or `STORAGE_PORT` to change these; set `VITE_API_URL` to the API URL if changing `API_PORT`. Port 5173 must be available: the local API's CORS origin and seeded creative URLs use it.
 
-The runner starts disposable Docker containers for DynamoDB Local and S3Mock, creates the table and bucket, and seeds six campaigns and seven days of synthetic sample statistics. The dashboard labels local data as sample data; subsequent interactions add real events to those local counters. Stopping the runner deletes all local data. The local admin key defaults to `local-admin`; override it with `ADMIN_KEY`. This key and the object store are for local development only. Original SVG creatives are served by Vite. Remove a cloud `demo/.env` override before using this local-only option.
+The runner starts disposable Docker containers for DynamoDB Local and S3Mock, creates the table and bucket, and seeds six campaigns, eight creatives, and seven days of synthetic sample statistics. Four campaigns start active and two paused. The dashboard labels local data as sample data; subsequent interactions add real events to those local counters. Stopping the runner deletes all local data. The local admin key defaults to `local-admin`; override it with `ADMIN_KEY`. This key and the object store are for local development only. Original SVG creatives are served by Vite. Remove a cloud `demo/.env` override before using this local-only option.
 
 1. Open **Overview**, select **Find your next adventure (`c3`)**, and note its click total.
 2. Open **Publisher preview**. There are two `sidebar` slots and one `banner` slot.
@@ -23,7 +23,7 @@ The runner starts disposable Docker containers for DynamoDB Local and S3Mock, cr
 4. Return to **Overview** and use **Refresh data** after the event is recorded. The `c3` click total increases.
 5. Use **Load new ads** in Publisher preview to select new creatives. Sidebar campaigns are weighted; the banner always belongs to `c3`.
 
-Synthetic history is written only to the disposable local database. The normal seed script writes campaign and creative definitions, preserves existing counters, and does not fabricate AWS traffic; cloud counters reflect recorded activity.
+Synthetic history is written only to the disposable local database. The normal seed script writes campaign and creative definitions, preserves existing counters, and does not fabricate AWS traffic; cloud counters reflect recorded activity. **Reseeding overwrites the six fixed campaign definitions and their seeded creatives**, including edits made through Campaigns. Other campaigns, uploaded objects, and existing counters are not reset.
 
 The shadcn/ui dashboard shows filled requests, rendered impressions, viewable impressions, clicks, conversions and CTR. CTR is total clicks divided by rendered impressions. Viewable means at least half the ad remained visible for one continuous second while the document was visible. Metrics absent from an older API response are shown as unavailable rather than zero.
 
@@ -33,7 +33,9 @@ Events are batched and counted by UTC day. Event IDs are deduplicated for approx
 
 Browser fingerprinting is optional and off until the visitor opts in. It hashes browser characteristics together with the publisher's origin, so the same signals on different sites produce different identifiers. A fingerprint is pseudonymous, not anonymous: different browsers may collide and browser changes may change the identifier. It is not suitable as proof of identity.
 
-Fingerprint associations are stored separately in DynamoDB under `PK = FINGERPRINT#<fingerprint>` and `SK = EVENT#<eventId>`, with `expiresAt` set 30 days after ingestion. DynamoDB TTL deletion is asynchronous and can occur after the expiry time. Withdrawing consent stops future collection but does not immediately delete existing associations; they expire on their original schedule. Fingerprints and their raw input signals are not sent to Firehose or stored in the existing S3 analytics history.
+The browser hashes the page origin, user agent, language, platform, hardware concurrency, screen dimensions and color depth, and time zone locally using SHA-256. It sends only the resulting 64-character hexadecimal digest with consented events, not those inputs. The origin is not a secret, and hashing does not make the identifier anonymous. Publishers integrating the package must obtain and manage appropriate consent themselves; the showcase's checkbox applies only to its own site.
+
+Fingerprint associations are stored separately in DynamoDB under `PK = FINGERPRINT#<fingerprint>` and `SK = EVENT#<eventId>`, with `expiresAt` set 30 days after ingestion. An authorized database operator can query that partition key to inspect associations; the dashboard does not currently provide a fingerprint reporting view. DynamoDB TTL deletion is asynchronous and can occur after the expiry time. Withdrawing consent stops future collection but does not immediately delete existing associations or recall events already sent. Fingerprints and their raw input signals are not sent to Firehose or stored in the existing S3 analytics history.
 
 ## Workspace
 
@@ -43,8 +45,10 @@ Fingerprint associations are stored separately in DynamoDB under `PK = FINGERPRI
 - `demo`: Vite publisher, campaign dashboard, and administration views, using Tailwind and shadcn/ui components.
 - `scripts/seed.ts`: repeatable campaign/creative seed; preserves existing counters.
 - `scripts/local.ts`: local database and HTTP adapter for the Lambda handlers.
-- `scripts/deploy-showcase.ts` and `scripts/delete-showcase.ts`: explicit-profile deployment and confirmed teardown.
+- `scripts/deploy-showcase.ts` and `scripts/delete-showcase.ts`: explicit-profile deployment and confirmation-gated teardown; updated-stack teardown has not been exercised on AWS.
 - `backend/analytics.sql`: Athena queries over buffered raw events.
+
+The optional `presentation/` directory is ignored by Git. Its midpoint slides, PDFs, and generated reading scripts are historical snapshots; the local `presentation/demo-script.md` is a current walkthrough when present.
 
 ## React package
 
@@ -63,7 +67,7 @@ export function Publisher({ apiUrl }: { apiUrl: string }) {
 }
 ```
 
-See [the package README](packages/react-ads/README.md) for props, viewability, batching, conversion events, and delivery limitations.
+See [the package README](packages/react-ads/README.md) for props, fingerprint consent, viewability, batching, conversion events, and delivery limitations.
 
 Build and create an installable package tarball:
 
@@ -80,16 +84,33 @@ npm test --workspace=@pulsar/react-ads
 TABLE_NAME=test node --import tsx --test backend/src/handlers/*.test.ts
 npm run build
 sam validate --lint --template-file backend/template.yaml --region us-east-1
-npm run build:backend -- --region us-east-1
+PATH="$PWD/node_modules/.bin:$PATH" npm run build:backend -- --region us-east-1
 ```
 
 `build` creates the React package and static demo (`demo/dist`); `build:backend` creates `.aws-sam/build` using SAM and esbuild.
 
+## API
+
+All routes are relative to `ApiUrl`. The ad, event, and stats routes are public; administration routes require an `x-admin-key` header. CORS does not provide authentication.
+
+| Route | Purpose |
+| --- | --- |
+| `GET /ad?placement=sidebar` | Select an active campaign and creative for a placement; returns an ad on `200` or no fill on `204`. |
+| `POST /events` | Record a batch of 1–100 events, up to 64 KiB decoded JSON; returns `202` when accepted. JSON is parsed even with `text/plain` for browser beacons. |
+| `GET /stats?campaignId=c1&days=7` | Return daily UTC counters; `days` defaults to 7 and must be 1–365. Missing days are zero-filled. |
+| `GET /campaigns`, `POST /campaigns`, `PUT /campaigns/{id}` | List, create, and edit campaigns. |
+| `POST /campaigns/{id}/creatives` | Attach a creative to an existing campaign. |
+| `POST /uploads` | Create a five-minute presigned image upload URL. |
+
+Each event has an `eventId`, `type` (`impression`, `viewable`, `click`, or `conversion`), `impressionId`, `campaignId`, `creativeId`, `placement`, and millisecond timestamp `ts`. `sessionId` and a 64-character lowercase hexadecimal `fingerprint` are optional. Identifier fields use 1–128 letters, digits, underscores, or hyphens. Deduplication and the counter increment happen in a DynamoDB transaction; fingerprint associations use that same transaction.
+
+If Firehose rejects a batch, the API can return `503` after counters have already been updated. Retrying the same event IDs avoids double-counting and can retry pending raw delivery, but there is no independent replay worker. Client queues and beacon delivery are best-effort, and raw delivery can be delayed or duplicated.
+
 ## Administration and raw analytics
 
-Open **Campaigns**, enter the admin key, and connect to list, create, edit, pause, or resume campaigns. Select a campaign to upload a PNG, JPEG, WebP, or GIF and add a creative. Uploads use five-minute presigned PUT URLs. File type is checked by declared MIME type, not by inspecting bytes or enforcing a size limit; this is a solo-operator demo, not a hardened upload service.
+Open **Campaigns**, enter the admin key, and connect to list, create, edit, pause, or resume campaigns. Select a campaign to upload a PNG, JPEG, WebP, or GIF and add a creative. Uploads use five-minute presigned PUT URLs. File type is checked by declared MIME type, not by inspecting bytes or enforcing a size limit; this is a solo-operator demo, not a hardened upload service. The Overview campaign selector is currently a fixed list of seeded campaigns, so newly created campaigns appear in Campaigns but not automatically in Overview.
 
-On AWS, events are sent to Firehose after the DynamoDB transaction and converted to Parquet in S3. Athena queries in `backend/analytics.sql` use projected UTC arrival-date partitions. Delivery is buffered for up to 15 minutes under normal conditions and may be delayed or duplicated; DynamoDB remains the live counter source. Provider-generated session IDs last for the provider instance and API URL. Events without a session ID are excluded from the session query.
+On AWS, events are sent to Firehose after the DynamoDB transaction and converted to Parquet in S3. Athena queries in `backend/analytics.sql` use projected UTC arrival-date partitions; adjust the example dates before running them. Delivery is buffered for up to 15 minutes under normal conditions and may be delayed or duplicated; DynamoDB remains the live counter source. Provider-generated session IDs last for the provider instance and API URL. Events without a session ID are excluded from the session query. Athena execution was verified with an authorized root session; the deployer role was denied `athena:StartQueryExecution` and needs appropriately scoped permissions for routine queries.
 
 ## Deploy the full showcase to AWS
 
@@ -97,7 +118,7 @@ Requires Node.js 24 LTS, npm, AWS CLI v2, AWS SAM CLI, authenticated **non-root*
 
 The deployment profile **`pulsar`** assumes the non-root role `PulsarShowcaseDeployer`. The last deployment used a long-lived IAM access key in the local **`pulsar-iam`** profile as its source; it is stored in `~/.aws/credentials`. Replace it with short-lived credentials and deactivate the key once the replacement is verified. Profile names alone do not establish identity: verify the caller before any operation, and do not deploy as root.
 
-The operator's first console sign-in is **https://061039759623.signin.aws.amazon.com/console**, IAM username `pulsar-operator`. The initial password is in macOS Keychain, service `pulsar-aws-console`, account `pulsar-operator`; password reset is required at first sign-in. Retrieve it privately with Keychain Access, or on the authorized workstation:
+The operator's console sign-in is **https://061039759623.signin.aws.amazon.com/console**, IAM username `pulsar-operator`. The initial password was exposed in a previous chat; reset it if that has not already been done. Its original value is in macOS Keychain, service `pulsar-aws-console`, account `pulsar-operator`; password reset is required at first sign-in. Retrieve it privately with Keychain Access, or on the authorized workstation:
 
 ```sh
 security find-generic-password -s pulsar-aws-console -a pulsar-operator -w
@@ -135,7 +156,7 @@ The deployment script defaults to profile `pulsar`, region `us-east-1`, and stac
 
 Deployment builds and typechecks, validates the template, builds the Lambda artifacts, and deploys with `CAPABILITY_IAM`, the approved email, the permissions boundary, and tag `Project=pulsar-showcase`. It creates or verifies ownership of **`pulsar-showcase-artifacts-<account-id>-<region>`**, refusing to treat access-denied errors as a missing bucket. This artifact bucket intentionally lives outside the stack.
 
-It then builds the demo, seeds the AWS table, and syncs the site. Existing `uploads/` objects and counters are preserved. The `AdminKey` CloudFormation parameter is masked in CloudFormation, but the deployment script passes it as a SAM process argument: other users on the machine may be able to inspect it during deployment. Use a trusted workstation and rotate the key if exposed.
+It then builds the demo, seeds the AWS table, and syncs the site. Existing `uploads/` objects and counters are preserved, but the fixed seed campaign and creative definitions are overwritten. The `AdminKey` CloudFormation parameter is masked in CloudFormation, but the deployment script passes it as a SAM process argument and failed commands can expose it in error output. Other users on the machine may be able to inspect it during deployment. Use a trusted workstation and rotate the key if exposed.
 
 The outputs include `ApiUrl`, `TableName`, `SiteBucketName`, `SiteUrl`, `BudgetName`, and `CostGuardFunctionName`:
 

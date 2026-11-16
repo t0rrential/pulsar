@@ -34,9 +34,44 @@ export function App() {
 
 `apiUrl` is the API base URL; `children` contains components using the package. Events are queued and sent at 10 events, every five seconds, when the document becomes hidden, and on provider unmount or URL change. Ordinary batches use `fetch` with `keepalive`; failed responses and network errors are requeued with the same event IDs for a later flush while the provider remains mounted. On hidden or unmount the package prefers a plain-string `sendBeacon`, falling back to `fetch`. Browsers do not expose beacon responses, and queues are in memory, so delivery across page exit or a failed final send cannot be guaranteed.
 
+| Prop | Type | Meaning |
+| --- | --- | --- |
+| `apiUrl` | `string` | Base URL of the Pulsar API. |
+| `children` | `ReactNode` | Components using the provider context. |
+| `fingerprintConsent` | `boolean` | Explicit visitor consent to site-scoped fingerprinting; defaults to `false`. |
+
 `fingerprintConsent` is optional and defaults to `false`. Set it to `true` only after the visitor explicitly consents; set it back to `false` when consent is withdrawn. The provider derives an origin-scoped SHA-256 fingerprint from browser characteristics and attaches it to events while consent is enabled. The provider controls this field; callers cannot override it through `track`. Fingerprinting is unavailable when the browser cannot compute the digest.
 
 `useAdFingerprint()` returns the current fingerprint inside an `AdProvider`, or `null` when consent is off, computation is pending, or the browser cannot compute it. Fingerprints are approximate pseudonymous identifiers, not proof of identity. The backend stores associations separately with 30-day TTL; DynamoDB deletes expired records asynchronously. Withdrawal prevents future collection but does not immediately remove prior records. No fingerprint or browser signals are sent to Firehose.
+
+Example opt-in integration:
+
+```tsx
+import { useState } from "react";
+import { AdProvider, AdSlot, useAdFingerprint } from "@pulsar/react-ads";
+
+function FingerprintStatus() {
+  const fingerprint = useAdFingerprint();
+  return <p>{fingerprint ? "Fingerprint available" : "No fingerprint"}</p>;
+}
+
+export function PublisherWithConsent({ apiUrl }: { apiUrl: string }) {
+  const [consent, setConsent] = useState(false);
+  return (
+    <AdProvider apiUrl={apiUrl} fingerprintConsent={consent}>
+      <label>
+        <input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} />
+        Allow this site to associate ad events with a browser fingerprint.
+      </label>
+      <p>Records expire after 30 days; deletion may be delayed. Turning this off does not delete previously recorded data.</p>
+      <FingerprintStatus />
+      <AdSlot placement="sidebar" />
+    </AdProvider>
+  );
+}
+```
+
+The digest uses the page origin, user agent, language, platform, hardware concurrency, screen dimensions and color depth, and time zone. Browser settings can change, and different browsers can produce the same digest. The origin is not a secret; this is not anonymous tracking or proof of a unique person. The package does not provide a consent-management system: the publisher is responsible for the notice, consent choice, and applicable privacy requirements.
 
 ## AdSlot
 
