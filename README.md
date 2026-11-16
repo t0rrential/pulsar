@@ -60,6 +60,8 @@ The local demo uses `local-admin`; the live key is held privately by the operato
 
 The optional `presentation/` directory is ignored by Git. When present locally, `demo-script.md` is the live walkthrough, `current-script.md` is the matching slide narration, and `pulsar-current.pdf` / `pulsar-current.pptx` are the current deck. The `pulsar-midpoint` slides and older graphs are historical snapshots. Presentation files are not included in a clone unless distributed separately.
 
+The current speaking scripts are also available together as `presentation/pulsar-current-scripts.pdf`; `presentation/pulsar-current-pack.zip` bundles the current deck and scripts. The HTML slides and editable PowerPoint are generated from one source by `python3 presentation/generate-current.py` (requires `python-pptx`); print `presentation/current-slides.html` with backgrounds enabled to create the PDF. Older `pulsar-midpoint` and `reading-scripts` exports remain historical.
+
 ## React package
 
 The package is available as `@pulsar/react-ads` inside this workspace; it has not been published to npm.
