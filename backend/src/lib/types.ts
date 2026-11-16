@@ -18,6 +18,8 @@ export interface AdEvent {
   placement: string;
   sessionId?: string;
   fingerprint?: string;
+  browser?: 'Chrome' | 'Edge' | 'Firefox' | 'Safari' | 'Other';
+  device?: 'Mobile' | 'Tablet' | 'Desktop' | 'Other';
   ts: number;
 }
 

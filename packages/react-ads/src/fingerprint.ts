@@ -1,3 +1,19 @@
+import type { AdEvent } from "./types";
+
+/** Extract only broad categories; the user agent itself is never sent. */
+export function coarseUserAgent(userAgent: string): { browser: NonNullable<AdEvent["browser"]>; device: NonNullable<AdEvent["device"]> } {
+  const browser = /(?:Edg|EdgiOS|EdgA)\//i.test(userAgent) ? "Edge"
+    : /(?:Firefox|FxiOS)\//i.test(userAgent) ? "Firefox"
+    : /(?:Chrome|CriOS)\//i.test(userAgent) ? "Chrome"
+    : /Version\/.*Safari\//i.test(userAgent) ? "Safari"
+    : "Other";
+  const device = /iPad|Tablet/i.test(userAgent) || (/Android/i.test(userAgent) && !/Mobile/i.test(userAgent)) ? "Tablet"
+    : /Mobile|iPhone|iPod/i.test(userAgent) ? "Mobile"
+    : /Windows NT|Macintosh|X11|Linux/i.test(userAgent) ? "Desktop"
+    : "Other";
+  return { browser, device };
+}
+
 // Signals stay in this browser; only their site-scoped digest is sent.
 export async function browserFingerprint(): Promise<string | null> {
   try {

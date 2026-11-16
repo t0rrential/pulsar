@@ -49,6 +49,9 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
         !isIdentifier(item.placement) || (item.sessionId !== undefined && !isIdentifier(item.sessionId)) ||
         (item.fingerprint !== undefined &&
           (typeof item.fingerprint !== 'string' || item.fingerprint.length !== 64 || !/^[0-9a-f]{64}$/.test(item.fingerprint))) ||
+        ((item.browser !== undefined || item.device !== undefined) && item.fingerprint === undefined) ||
+        (item.browser !== undefined && !['Chrome', 'Edge', 'Firefox', 'Safari', 'Other'].includes(item.browser)) ||
+        (item.device !== undefined && !['Mobile', 'Tablet', 'Desktop', 'Other'].includes(item.device)) ||
         !['impression', 'click', 'viewable', 'conversion'].includes(item.type ?? '') ||
         typeof item.ts !== 'number' || !Number.isInteger(item.ts) ||
         item.ts < 0 || item.ts > 253_402_300_799_999) {
@@ -59,13 +62,15 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       creativeId: item.creativeId, placement: item.placement, type: item.type!, ts: item.ts,
       ...(item.sessionId ? { sessionId: item.sessionId } : {}),
       ...(item.fingerprint !== undefined ? { fingerprint: item.fingerprint } : {}),
+      ...(item.browser !== undefined ? { browser: item.browser } : {}),
+      ...(item.device !== undefined ? { device: item.device } : {}),
     });
   }
 
   const stream = process.env.FIREHOSE_STREAM_NAME;
-  const pending = new Map<string, Omit<AdEvent, 'fingerprint'>>();
+  const pending = new Map<string, Omit<AdEvent, 'fingerprint' | 'browser' | 'device'>>();
   for (const incoming of events) {
-    const { fingerprint, ...item } = incoming;
+    const { fingerprint, browser, device, ...item } = incoming;
     const key = eventKey(item.eventId);
     const date = new Date(item.ts).toISOString().slice(0, 10);
     const ingestedAt = Math.floor(Date.now() / 1000);
@@ -96,6 +101,8 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
                 eventId: item.eventId, campaignId: item.campaignId, creativeId: item.creativeId,
                 type: item.type, placement: item.placement, ts: item.ts,
                 ...(item.sessionId ? { sessionId: item.sessionId } : {}),
+                ...(browser !== undefined ? { browser } : {}),
+                ...(device !== undefined ? { device } : {}),
                 expiresAt: ingestedAt + fingerprintRetentionSeconds,
               },
               ConditionExpression: 'attribute_not_exists(PK)',
@@ -109,7 +116,7 @@ export async function handler(event: APIGatewayProxyEventV2): Promise<APIGateway
       const existing = await db.send(new GetCommand({ TableName: tableName, Key: key, ConsistentRead: true }));
       if (!existing.Item) throw error;
       if (stream && existing.Item.firehosePending && existing.Item.event) {
-        pending.set(item.eventId, existing.Item.event as Omit<AdEvent, 'fingerprint'>);
+        pending.set(item.eventId, existing.Item.event as Omit<AdEvent, 'fingerprint' | 'browser' | 'device'>);
       }
     }
   }

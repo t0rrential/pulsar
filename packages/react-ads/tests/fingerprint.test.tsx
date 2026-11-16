@@ -5,6 +5,19 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest";
 import { AdProvider, useAdEvents, useAdFingerprint } from "../src";
 import type { AdEvent } from "../src";
+import { coarseUserAgent } from "../src/fingerprint";
+
+it.each([
+  ["Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 Chrome/120.0 Safari/537.36 Edg/120.0", "Edge", "Desktop"],
+  ["Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Version/17.0 Mobile Safari/604.1", "Safari", "Mobile"],
+  ["Mozilla/5.0 (Linux; Android 13; Pixel) AppleWebKit/537.36 Chrome/120.0 Mobile Safari/537.36", "Chrome", "Mobile"],
+  ["Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0 Safari/537.36", "Chrome", "Tablet"],
+  ["Mozilla/5.0 (iPad; CPU OS 17_0) AppleWebKit/605.1.15 Version/17.0 Safari/604.1", "Safari", "Tablet"],
+  ["Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0", "Firefox", "Desktop"],
+  ["unrecognized agent", "Other", "Other"],
+])("classifies user agent into coarse labels", (ua, browser, device) => {
+  expect(coarseUserAgent(ua)).toEqual({ browser, device });
+});
 
 const event: AdEvent = { eventId: "event-1", type: "conversion", impressionId: "i1", campaignId: "c1", creativeId: "cr1", placement: "sidebar", ts: 123 };
 
@@ -102,6 +115,8 @@ it("strips a resolved fingerprint from queued events when consent is withdrawn",
   flush();
   expect(events()).toHaveLength(1);
   expect(events()[0]?.fingerprint).toBeUndefined();
+  expect(events()[0]?.browser).toBeUndefined();
+  expect(events()[0]?.device).toBeUndefined();
   expect(screen.getByText("none")).toBeTruthy();
 });
 
@@ -118,10 +133,14 @@ it("does not restore a fingerprint when an in-flight batch fails after withdrawa
   flush();
   const sent = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string) as { events: AdEvent[] };
   expect(sent.events[0]?.fingerprint).toBe("ab".repeat(32));
+  expect(sent.events[0]?.browser).toBeDefined();
+  expect(sent.events[0]?.device).toBeDefined();
   rerender(<AdProvider apiUrl="https://ads.example"><Tracker /></AdProvider>);
   await act(async () => { finishRequest(new Response(null, { status: 503 })); });
   flush();
   expect(events().at(-1)?.fingerprint).toBeUndefined();
+  expect(events().at(-1)?.browser).toBeUndefined();
+  expect(events().at(-1)?.device).toBeUndefined();
 });
 
 it("withdraws consent from an older queue when the API URL changes", async () => {
@@ -132,4 +151,36 @@ it("withdraws consent from an older queue when the API URL changes", async () =>
   flush();
   expect(events().length).toBeGreaterThan(0);
   expect(events().every((item) => item.fingerprint === undefined)).toBe(true);
+});
+
+it("sends only coarse labels with a consented fingerprint", async () => {
+  const { resolve, flush, events } = setup();
+  const userAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0) AppleWebKit/605.1.15 Version/17.0 Mobile Safari/604.1";
+  const original = Object.getOwnPropertyDescriptor(navigator, "userAgent");
+  Object.defineProperty(navigator, "userAgent", { configurable: true, value: userAgent });
+  try {
+    render(<AdProvider apiUrl="https://ads.example" fingerprintConsent><Tracker /></AdProvider>);
+    await act(async () => resolve());
+    flush();
+    expect(events()[0]).toMatchObject({ fingerprint: "ab".repeat(32), browser: "Safari", device: "Mobile" });
+    expect(JSON.stringify(events())).not.toContain(userAgent);
+    expect(events()[0]).not.toHaveProperty("userAgent");
+  } finally {
+    if (original) Object.defineProperty(navigator, "userAgent", original);
+    else Reflect.deleteProperty(navigator, "userAgent");
+  }
+});
+
+it("ignores caller-supplied fingerprint and labels without consent", () => {
+  const { flush, events } = setup();
+  function Spoof() {
+    const track = useAdEvents();
+    useEffect(() => { track({ ...event, fingerprint: "a".repeat(64), browser: "Chrome", device: "Mobile" }); }, [track]);
+    return null;
+  }
+  render(<AdProvider apiUrl="https://ads.example"><Spoof /></AdProvider>);
+  flush();
+  expect(events()[0]).not.toHaveProperty("fingerprint");
+  expect(events()[0]).not.toHaveProperty("browser");
+  expect(events()[0]).not.toHaveProperty("device");
 });

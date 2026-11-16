@@ -19,6 +19,8 @@ export interface AdEvent {
   sessionId?: string;
   /** SHA-256 site-scoped pseudonymous fingerprint, when consented and available. */
   fingerprint?: string;
+  browser?: "Chrome" | "Edge" | "Firefox" | "Safari" | "Other";
+  device?: "Mobile" | "Tablet" | "Desktop" | "Other";
   ts: number;
 }
 

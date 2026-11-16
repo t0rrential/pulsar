@@ -46,13 +46,31 @@ test('rejects malformed fingerprints before writing any event', async () => {
   } finally { db.send = original; }
 });
 
+test('rejects invalid coarse labels and labels without a fingerprint before writing', async () => {
+  const original = db.send;
+  let writes = 0;
+  db.send = (async () => { writes++; return {}; }) as typeof db.send;
+  try {
+    for (const fields of [
+      { browser: 'Chrome' }, { device: 'Mobile' },
+      { fingerprint: 'a'.repeat(64), browser: 'chrome' },
+      { fingerprint: 'a'.repeat(64), browser: null },
+      { fingerprint: 'a'.repeat(64), device: 'Phone' },
+      { fingerprint: 'a'.repeat(64), device: {} },
+    ]) {
+      assert.equal((await postEvents(request([sample, { ...sample, ...fields }]))).statusCode, 400);
+    }
+    assert.equal(writes, 0);
+  } finally { db.send = original; }
+});
+
 test('stores a fingerprint association atomically and never refreshes it on duplicate events', async () => {
   const originalDb = db.send;
   const originalNow = Date.now;
   const originalStream = process.env.FIREHOSE_STREAM_NAME;
   delete process.env.FIREHOSE_STREAM_NAME;
   const fingerprint = '0123456789abcdef'.repeat(4);
-  const incoming = { ...sample, sessionId: 'session-1', fingerprint };
+  const incoming = { ...sample, sessionId: 'session-1', fingerprint, browser: 'Chrome', device: 'Desktop' };
   let now = 1_760_000_000_000;
   let stored: Record<string, unknown> | undefined;
   let association: Record<string, unknown> | undefined;
@@ -79,7 +97,7 @@ test('stores a fingerprint association atomically and never refreshes it on dupl
       PK: `FINGERPRINT#${fingerprint}`, SK: 'EVENT#event-1',
       eventId: 'event-1', campaignId: 'campaign-1', creativeId: 'creative-1',
       type: 'viewable', placement: 'sidebar', ts: 1760678400000,
-      sessionId: 'session-1', expiresAt: 1762592000,
+      sessionId: 'session-1', browser: 'Chrome', device: 'Desktop', expiresAt: 1762592000,
     });
     assert.ok(!JSON.stringify(stored).includes(fingerprint));
     assert.equal((stored as Record<string, unknown> | undefined)?.expiresAt, 1762592000);
@@ -170,7 +188,7 @@ test('retries pending Firehose delivery without incrementing the counter again',
   const originalStream = process.env.FIREHOSE_STREAM_NAME;
   process.env.FIREHOSE_STREAM_NAME = 'events';
   const fingerprint = 'a'.repeat(64);
-  const incoming = { ...sample, fingerprint };
+  const incoming = { ...sample, fingerprint, browser: 'Safari', device: 'Mobile' };
   let stored: Record<string, unknown> | undefined;
   let count = 0;
   let attempts = 0;

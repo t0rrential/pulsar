@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useInsertionEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { ReactNode } from "react";
-import { browserFingerprint } from "./fingerprint";
+import { browserFingerprint, coarseUserAgent } from "./fingerprint";
 import type { AdEvent } from "./types";
 
 export interface AdProviderProps {
@@ -51,7 +51,9 @@ export function AdProvider({ apiUrl, children, fingerprintConsent = false }: AdP
       const batch = events.splice(0, count);
       const body = JSON.stringify({ events: batch.map(({ event, consentVersion }) => ({
         ...event,
-        ...(consent && consentVersion === version && fingerprint ? { fingerprint } : {}),
+        ...(consent && consentVersion === version && fingerprint
+          ? { fingerprint, ...coarseUserAgent(navigator.userAgent) }
+          : {}),
       })) });
       if (unloading) {
         try {
@@ -120,7 +122,7 @@ export function AdProvider({ apiUrl, children, fingerprintConsent = false }: AdP
         apiUrl: baseUrl,
         track: (event: AdEvent) => {
           // The provider, not a caller-supplied field, controls fingerprint consent.
-          const { fingerprint: _fingerprint, ...safeEvent } = event;
+          const { fingerprint: _fingerprint, browser: _browser, device: _device, ...safeEvent } = event;
           events.push({ event: { ...safeEvent, sessionId: event.sessionId ?? sessionId }, consentVersion: consent ? version : null });
           if (stopped) { queues.current.add(controller); flush(true); }
           else if (events.length >= 10) flush();
