@@ -1,12 +1,12 @@
 import { StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { AdProvider, AdSlot, useAdFingerprint } from '@pulsar/react-ads';
+import { AdProvider, useAdFingerprint } from '@pulsar/react-ads';
 import { BarChart3, ChevronRight, CircleHelp, ExternalLink, LayoutDashboard, PanelTop, RefreshCw, Settings2, Sparkles } from 'lucide-react';
 import Admin from './Admin';
 import DashboardStats from './DashboardStats';
+import PublisherPreview from './PublisherPreview';
 import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader } from './components/ui/card';
 import './theme.css';
 
 const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
@@ -30,7 +30,7 @@ function FingerprintControl({ consent, onChange }: { consent: boolean; onChange:
     <section aria-labelledby="fingerprint-heading" className="mb-6 rounded-lg border bg-card p-4">
       <h2 id="fingerprint-heading" className="text-sm font-semibold">Optional browser fingerprint</h2>
       <p className="mt-2 max-w-3xl text-xs leading-5 text-zinc-500">
-        Allow this publisher site to use a pseudonymous browser/device fingerprint with ad events. It is imperfect: browsers can share a fingerprint and it can change. It is scoped to this site, not other publishers. Fingerprint records expire after 30 days; deletion may be delayed. Turning this off stops future use but does not delete records already collected or recall events already sent. Ordinary ad tracking continues without it.
+        Allow this publisher site to associate ad events with a pseudonymous, site-scoped fingerprint. The hash is generated locally from browser and device settings; only the hash, browser family and device category are sent, not the underlying settings or raw user agent. Fingerprints are imperfect: browsers can share one and it can change. Records expire after 30 days; deletion may be delayed. Turning this off stops future use but does not delete records already collected or recall events already sent. Ordinary ad tracking continues without it.
       </p>
       <label className="mt-3 flex cursor-pointer items-center gap-2 text-sm font-medium">
         <input type="checkbox" checked={consent} onChange={(event) => { setCopyStatus(''); onChange(event.target.checked); }} />
@@ -60,7 +60,6 @@ function readFingerprintConsent(): boolean {
 function App() {
   const initialView = window.location.hash === '#admin' ? 'admin' : window.location.hash === '#publisher' ? 'publisher' : 'stats';
   const [view, setView] = useState<View>(initialView);
-  const [adGeneration, setAdGeneration] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
   const [campaignId, setCampaignId] = useState('c1');
   const [fingerprintConsent, setFingerprintConsent] = useState(readFingerprintConsent);
@@ -162,33 +161,7 @@ function App() {
           <main className="mx-auto w-full max-w-[1440px] px-5 py-8 sm:px-8 lg:px-10 lg:py-10">
             {isLocalApi && <p className="mb-6 inline-flex rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-900 dark-sample-notice">Sample history · local only</p>}
             <FingerprintControl consent={fingerprintConsent} onChange={updateFingerprintConsent} />
-            {view === 'admin' ? <Admin apiUrl={apiUrl} /> : view === 'publisher' ? (
-              <>
-                <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
-                  <div><div className="mb-2 flex items-center gap-2 text-xs font-medium text-zinc-500"><PanelTop className="size-3.5" aria-hidden="true" />PUBLISHER</div><h1 className="text-2xl font-semibold tracking-tight text-zinc-950 sm:text-[28px]">Publisher preview</h1><p className="mt-2 text-sm text-zinc-500">See your ad placements in context, with real campaigns and real activity.</p></div>
-                  <Button variant="outline" onClick={() => setAdGeneration((key) => key + 1)}><RefreshCw />Load new ads</Button>
-                </div>
-                <div className="grid items-start gap-6 xl:grid-cols-[minmax(0,1fr)_300px]" key={adGeneration}>
-                  <Card className="gap-0 overflow-hidden py-0 shadow-none">
-                    <div className="relative overflow-hidden bg-[#eef3ec] px-8 py-16 sm:px-12">
-                      <div className="absolute -right-12 -top-20 size-60 rounded-full border-[36px] border-[#dce8d9]" aria-hidden="true" />
-                      <p className="relative text-xs font-semibold uppercase tracking-[0.16em] text-emerald-800/70">The Pulsar Journal</p>
-                      <h2 className="relative mt-4 max-w-md text-3xl font-semibold leading-tight tracking-tight text-[#294333] sm:text-4xl">Ideas in good company.</h2>
-                      <p className="relative mt-4 max-w-md text-sm leading-6 text-[#5b7261]">A little space for something worth discovering.</p>
-                    </div>
-                    <CardContent className="space-y-5 p-7 sm:p-9">
-                      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-zinc-400">Design & technology · Demo content</p>
-                      <h3 className="text-xl font-semibold tracking-tight">A little space for something worth discovering.</h3>
-                      <p className="max-w-2xl text-sm leading-7 text-zinc-500">This sample publisher page shows live ad components, selected by placement and campaign weight. Interactions are recorded in your campaign analytics.</p>
-                      <div className="border-t pt-6"><p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Sponsored · Banner</p><AdSlot placement="banner" width={728} height={90} /></div>
-                    </CardContent>
-                  </Card>
-                  <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-1">
-                    {['01', '02'].map((number) => <Card key={number} className="gap-3 py-5 shadow-none"><CardHeader><CardDescription className="text-[11px] font-semibold uppercase tracking-[0.12em] text-zinc-400">Sponsored · Sidebar {number}</CardDescription></CardHeader><CardContent><AdSlot placement="sidebar" /></CardContent></Card>)}
-                  </div>
-                </div>
-              </>
-            ) : (
+            {view === 'admin' ? <Admin apiUrl={apiUrl} /> : view === 'publisher' ? <PublisherPreview /> : (
               <>
                 <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
                   <div><div className="mb-2 flex items-center gap-2 text-xs font-medium text-zinc-500"><BarChart3 className="size-3.5" aria-hidden="true" />ANALYTICS</div><h1 className="text-2xl font-semibold tracking-tight text-zinc-950 sm:text-[28px]">Campaign overview</h1><p className="mt-2 text-sm text-zinc-500">A clear view of how your campaigns are performing.</p></div>
