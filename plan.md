@@ -109,7 +109,7 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
 - [x] `Query` `PK = CAMPAIGN#c1 AND SK BETWEEN STATS#<start> AND STATS#<today>` for the last N UTC days
 - [x] Return `{ "days": [ { "date": "2026-10-17", "requests": 0, "impressions": 0, "viewable": 0, "clicks": 0, "conversions": 0 } ] }`
 - [x] Admin-only campaign fingerprint reports with bounded scans and explicit incomplete-history limitations.
-- [x] Admin-only Firehose/S3 status and predefined, bounded Athena queries; live deployment and permissions require verification.
+- [x] Admin-only Firehose/S3 status and predefined, bounded Athena queries; verified against the deployed showcase after updating the scoped admin Lambda permissions boundary.
 
 ### 1.4 Seed script
 

@@ -2,9 +2,7 @@
 
 A React ad package, a publisher showcase, and a SAM serverless API backed by DynamoDB. Original SVG creatives and the website live in private S3; a Lambda serves them through API Gateway HTTPS. This account requires AWS verification before creating CloudFront resources, so the showcase does not depend on CloudFront.
 
-**Live showcase:** https://uhroesgpkb.execute-api.us-east-1.amazonaws.com/ — the redesigned dashboard, dark mode, six sample campaigns, opt-in browser fingerprinting, and updated tracking, administration, and analytics infrastructure are deployed. Live ad serving, event counters, admin authentication and image upload were checked; Firehose delivered Parquet to S3 and an Athena query returned recorded events. The deployer role was denied `athena:StartQueryExecution`; the query was verified using an authorized root session.
-
-The fingerprint reporting, updated preview and in-dashboard pipeline explorer described below are in the source tree; the currently deployed showcase may not yet include them.
+**Live showcase:** https://uhroesgpkb.execute-api.us-east-1.amazonaws.com/ — the dashboard, mobile/desktop publisher preview, opt-in fingerprint reporting and analytics pipeline explorer are deployed. Live verification exercised consented browser/device reporting, Firehose status and S3 object listings, and an Athena query started from the dashboard. Live ad serving, event counters, admin authentication and image upload were checked previously.
 
 ## Run locally
 
@@ -118,7 +116,7 @@ Open **Campaigns**, enter the admin key, and connect to list, create, edit, paus
 
 On AWS, events are sent to Firehose after the DynamoDB transaction and converted to Parquet in S3. Under **Campaigns**, connect and select **Open analytics pipeline**. **Load pipeline** shows Firehose status and up to 20 S3 object metadata entries; the listing reads at most two pages per prefix and labels an incomplete sample. Choose a predefined query and up to 31 UTC arrival dates, click **Run query**, then refresh its status to see results and bytes scanned. Queries never run automatically. Athena scans, S3 requests and stored results incur charges; the template caps each query at 100,000,000 scanned bytes, but a cancelled query can still incur charges. The local demo reports the cloud pipeline as unconfigured rather than simulating AWS.
 
-Athena queries in `backend/analytics.sql` also use projected UTC arrival-date partitions; adjust the example dates before running them. Firehose delivery is buffered for up to 15 minutes under normal conditions and may be delayed or duplicated; DynamoDB remains the live counter source. Provider-generated session IDs last for the provider instance and API URL. Events without a session ID are excluded from the session query. Athena execution was verified previously with an authorized root session; the deployer role was denied `athena:StartQueryExecution`. The new dashboard requires the deployed admin Lambda role and its permissions boundary to permit the scoped Athena, Glue, Firehose and S3 actions in the template.
+Athena queries in `backend/analytics.sql` also use projected UTC arrival-date partitions; adjust the example dates before running them. Firehose delivery is buffered for up to 15 minutes under normal conditions and may be delayed or duplicated; DynamoDB remains the live counter source. Provider-generated session IDs last for the provider instance and API URL. Events without a session ID are excluded from the session query. The deployer role was denied `athena:StartQueryExecution`; dashboard queries run as the scoped admin Lambda role, not as the deployer.
 
 ## Deploy the full showcase to AWS
 
@@ -161,6 +159,8 @@ unset BUDGET_EMAIL ADMIN_KEY
 ```
 
 The deployment script defaults to profile `pulsar`, region `us-east-1`, and stack **`pulsar-showcase`**. It rejects root and requires a valid account identity. `PERMISSIONS_BOUNDARY_ARN` may override the default `arn:aws:iam::<account-id>:policy/pulsar-showcase-runtime-boundary`; that policy must already exist. Each AWS/SAM command explicitly selects the profile and region.
+
+The showcase's separately managed `pulsar-showcase-runtime-boundary` policy was updated to allow the analytics actions for the current admin Lambda role only. The policy's `aws:PrincipalArn` condition names that role explicitly. If CloudFormation replaces the role, or the stack is deployed under another name, an IAM administrator must update the boundary to match the new role and resources; the template's inline permissions alone cannot override the boundary.
 
 Deployment builds and typechecks, validates the template, builds the Lambda artifacts, and deploys with `CAPABILITY_IAM`, the approved email, the permissions boundary, and tag `Project=pulsar-showcase`. It creates or verifies ownership of **`pulsar-showcase-artifacts-<account-id>-<region>`**, refusing to treat access-denied errors as a missing bucket. This artifact bucket intentionally lives outside the stack.
 
