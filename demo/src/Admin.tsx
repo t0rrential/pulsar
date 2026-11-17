@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { FormEvent } from 'react';
-import { ArrowUpRight, BarChart3, ImagePlus, KeyRound, Plus, RefreshCw } from 'lucide-react';
+import { ArrowUpRight, BarChart3, ImagePlus, Plus, RefreshCw } from 'lucide-react';
 import DashboardStats from './DashboardStats';
 import FingerprintReport from './FingerprintReport';
 import AnalyticsPipeline from './AnalyticsPipeline';
+import Account from './Account';
 import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './components/ui/card';
@@ -41,7 +42,7 @@ export default function Admin({ apiUrl }: { apiUrl: string }) {
   async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     const response = await fetch(`${baseUrl}${path}`, {
       ...options,
-      headers: { 'x-admin-key': key, ...(options.body ? { 'content-type': 'application/json' } : {}), ...options.headers },
+      headers: { authorization: `Bearer ${key}`, ...(options.body ? { 'content-type': 'application/json' } : {}), ...options.headers },
     });
     const body = await response.json().catch(() => null);
     if (!response.ok) throw new Error(body?.error || `Request failed (${response.status}).`);
@@ -61,6 +62,10 @@ export default function Admin({ apiUrl }: { apiUrl: string }) {
     setNotice('');
     try { await action(); } catch (cause) { setError(cause instanceof Error ? cause.message : 'Something went wrong. Please try again.'); } finally { setBusy(false); }
   }
+
+  useEffect(() => {
+    if (key) void run(loadCampaigns);
+  }, [key]);
 
   function editCampaign(campaign: Campaign) {
     setEditingId(campaign.id);
@@ -120,25 +125,14 @@ export default function Admin({ apiUrl }: { apiUrl: string }) {
         <p className="text-sm text-muted-foreground">Manage campaigns, creatives and their performance.</p>
       </header>
 
-      <Card className="gap-4 py-5">
-        <CardContent>
-          <form className="flex flex-col gap-4 sm:flex-row sm:items-end" onSubmit={(event) => { event.preventDefault(); void run(loadCampaigns); }}>
-            <div className="grid flex-1 gap-2">
-              <Label htmlFor="admin-key">Admin key</Label>
-              <Input id="admin-key" type="password" value={key} onChange={(event) => { setKey(event.target.value); setConnected(false); setCampaigns([]); setSelectedId(''); }} autoComplete="off" required aria-describedby="admin-key-help" />
-              <p id="admin-key-help" className="text-xs text-muted-foreground">Your key stays on this page and is not saved.</p>
-            </div>
-            <Button disabled={busy || !key} type="submit" className="sm:mb-5">
-              {connected ? <RefreshCw /> : <KeyRound />}
-              {busy ? 'Working…' : connected ? 'Refresh campaigns' : 'Connect'}
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
+      {!key ? <Account apiUrl={apiUrl} onConnect={setKey} /> : <div className="flex gap-2">
+        <Button type="button" variant="outline" disabled={busy} onClick={() => void run(loadCampaigns)}><RefreshCw />Refresh campaigns</Button>
+        <Button type="button" variant="outline" disabled={busy} onClick={() => void run(async () => { await request('/auth/logout', { method: 'POST' }); setKey(''); setConnected(false); setCampaigns([]); setSelectedId(''); })}>Sign out</Button>
+      </div>}
 
       {error && <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive" role="alert">{error}</p>}
       {notice && <p className="rounded-lg border border-border bg-muted/50 px-4 py-3 text-sm" role="status">{notice}</p>}
-      {!connected && !busy && <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">Connect with your admin key to manage campaigns.</div>}
+      {key && !connected && !busy && <div className="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">Unable to load campaigns. Try refreshing.</div>}
 
       {connected && <>
         <div className="flex justify-end"><Button type="button" variant="outline" size="sm" onClick={() => document.getElementById('analytics-pipeline')?.scrollIntoView()}>Open analytics pipeline</Button></div>

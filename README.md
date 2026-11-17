@@ -2,20 +2,25 @@
 
 A React ad package, a publisher showcase, and a SAM serverless API backed by DynamoDB. Original SVG creatives and the website live in private S3; a Lambda serves them through API Gateway HTTPS. This account requires AWS verification before creating CloudFront resources, so the showcase does not depend on CloudFront.
 
-**Live showcase:** https://uhroesgpkb.execute-api.us-east-1.amazonaws.com/ — the dashboard, mobile/desktop publisher preview, opt-in fingerprint reporting and analytics pipeline explorer are deployed. Live verification exercised consented browser/device reporting, Firehose status and S3 object listings, and an Athena query started from the dashboard. Live ad serving, event counters, admin authentication and image upload were checked previously.
+**Existing live showcase:** https://uhroesgpkb.execute-api.us-east-1.amazonaws.com/ — this is an older, separately deployed snapshot. The current repository's account authentication and AWS configuration have not been deployed or live-verified there.
 
 ## Run locally
 
-Requires Node.js 24 LTS, npm, and a running Docker daemon. No AWS credentials are needed for the local demo.
+Requires Node.js 24 LTS, npm, and a running Docker daemon. No AWS credentials are needed for the local demo. Account emails require a real SMTP service with TLS/STARTTLS:
 
 ```sh
 npm install
+read -rs SMTP_URL; echo
+export SMTP_URL
+export SMTP_FROM='noreply@example.com'
 npm run dev
 ```
 
+Set `SMTP_URL` to the SMTP connection URL supplied by your mail provider, including credentials when required, and `SMTP_FROM` to an authorized sender address. The prompt avoids placing the URL in shell history. Treat it as a secret. Without both settings, account email cannot be sent; there is no MFA bypass.
+
 Open **http://127.0.0.1:5173**. The API listens at `http://localhost:3001`, DynamoDB Local at `127.0.0.1:8000`, and S3Mock at `127.0.0.1:9000`. Set `API_PORT`, `DB_PORT`, or `STORAGE_PORT` to change these; set `VITE_API_URL` to the API URL if changing `API_PORT`. If Vite uses another port, set `LOCAL_WEB_ORIGIN` to its exact origin and `CREATIVE_BASE_URL` to that origin followed by `/creatives`.
 
-The runner starts disposable Docker containers for DynamoDB Local and S3Mock, creates the table and bucket, and seeds six campaigns, eight creatives, and seven days of synthetic sample statistics. Four campaigns start active and two paused. The dashboard labels local data as sample data; subsequent interactions add real events to those local counters. Stopping the runner deletes all local data. The local admin key defaults to `local-admin`; override it with `ADMIN_KEY`. This key and the object store are for local development only. Original SVG creatives are served by Vite. Remove a cloud `demo/.env` override before using this local-only option.
+The runner starts disposable Docker containers for DynamoDB Local and S3Mock, creates the table and bucket, and seeds six campaigns, eight creatives, and seven days of synthetic sample statistics. Four campaigns start active and two paused. The dashboard labels local data as sample data; subsequent interactions add real events to those local counters. Stopping the runner deletes all local data, including accounts and group memberships. The local group enrollment key defaults to `local-admin`; override it with `ADMIN_KEY`. This key and the object store are for local development only. Original SVG creatives are served by Vite. Remove a cloud `demo/.env` override before using this local-only option.
 
 1. Open **Overview**, select **Find your next adventure (`c3`)**, and note its click total.
 2. Open **Publisher preview**. Use the desktop or mobile width controls to inspect one `sidebar` and one `banner` slot.
@@ -41,11 +46,11 @@ Fingerprint associations are stored separately in DynamoDB under `PK = FINGERPRI
 
 1. In **Publisher preview**, enable **Allow fingerprinting on this site** only if you consent to the collection described above. Copy the displayed digest if you want to find your own row.
 2. Select **Refresh ads** and allow a few seconds for the event batch to be sent. A filled ad generates real activity; no-fill responses do not create an impression.
-3. Open **Campaigns**, enter the admin key, select the campaign that served the ad, and scroll to **Browser fingerprints**. For the default seeded banner, select **Find your next adventure** (`c3`). Use **Refresh** if its event is not yet visible.
+3. Open **Campaigns**, sign in and join with the deployment key if needed, select the campaign that served the ad, and scroll to **Browser fingerprints**. For the default seeded banner, select **Find your next adventure** (`c3`). Use **Refresh** if its event is not yet visible.
 4. The table displays the digest, coarse browser and device, last-seen time and event count. Select **Last 7 days** or **Last 30 days**; the report only covers activity within its retained history.
 5. Turn the consent checkbox off when finished. This prevents future fingerprint collection but does not erase existing records.
 
-The local demo uses `local-admin`; the live key is held privately by the operator. Do not show or share the key during a recording. The live report includes shared, real activity, not the local synthetic history.
+The local demo uses `local-admin`; keep any deployment key private and do not show it during a recording. The older live snapshot is not a verification of the current authentication flow. Its report reflects shared activity, not the local synthetic history.
 
 ## Workspace
 
@@ -60,7 +65,13 @@ The local demo uses `local-admin`; the live key is held privately by the operato
 
 The optional `presentation/` directory is ignored by Git. When present locally, `demo-script.md` is the live walkthrough, `current-script.md` is the matching slide narration, and `pulsar-current.pdf` / `pulsar-current.pptx` are the current deck. The `pulsar-midpoint` slides and older graphs are historical snapshots. Presentation files are not included in a clone unless distributed separately.
 
-The current speaking scripts are also available together as `presentation/pulsar-current-scripts.pdf`; `presentation/pulsar-current-pack.zip` bundles the current deck and scripts. The HTML slides and editable PowerPoint are generated from one source by `python3 presentation/generate-current.py` (requires `python-pptx`); print `presentation/current-slides.html` with backgrounds enabled to create the PDF. Older `pulsar-midpoint` and `reading-scripts` exports remain historical.
+The current speaking scripts are also available together as `presentation/pulsar-current-scripts.pdf`; `presentation/pulsar-current-pack.zip` bundles the deck, scripts, and standalone architecture diagram. To refresh the materials when their sources change:
+
+1. Render `presentation/pulsar-architecture.dot` to `pulsar-architecture.svg` and `.png` with Graphviz.
+2. Run `python3 presentation/generate-current.py` for the HTML slides and editable PowerPoint, `python3 presentation/generate-poster.py` for the poster, and `python3 presentation/generate-scripts.py` for the combined scripts HTML. The deck and poster generators require `python-pptx`, Pillow, and matplotlib.
+3. Print `current-slides.html` and `current-scripts.html` to their matching PDFs with backgrounds enabled; refresh the poster preview and presentation ZIP when distributing them.
+
+The charts use `presentation/synthetic-snapshot.json`, a labeled synthetic campaign snapshot; they are not real visitor data.
 
 ## React package
 
@@ -103,13 +114,16 @@ PATH="$PWD/node_modules/.bin:$PATH" npm run build:backend -- --region us-east-1
 
 ## API
 
-All routes are relative to `ApiUrl`. The ad, event, and stats routes are public; administration routes require an `x-admin-key` header. CORS does not provide authentication.
+All routes are relative to `ApiUrl`. The ad, event, and stats routes are public. Administration requires an authenticated account that has joined this deployment's administrator group; a deployment key alone is not an API credential. CORS does not provide authentication.
 
 | Route | Purpose |
 | --- | --- |
 | `GET /ad?placement=sidebar` | Select an active campaign and creative for a placement; returns an ad on `200` or no fill on `204`. |
 | `POST /events` | Record a batch of 1–100 events, up to 64 KiB decoded JSON; returns `202` when accepted. JSON is parsed even with `text/plain` for browser beacons. |
 | `GET /stats?campaignId=c1&days=7` | Return daily UTC counters; `days` defaults to 7 and must be 1–365. Missing days are zero-filled. |
+| `POST /auth/register`, `POST /auth/confirm` | Create an account and confirm its email address. |
+| `POST /auth/login`, `POST /auth/verify` | Sign in with a password and the emailed one-time code. |
+| `GET /auth/me`, `POST /auth/join`, `POST /auth/logout` | Check membership, join with the deployment key, or revoke the session. |
 | `GET /campaigns`, `POST /campaigns`, `PUT /campaigns/{id}` | List, create, and edit campaigns. |
 | `POST /campaigns/{id}/creatives` | Attach a creative to an existing campaign. |
 | `POST /uploads` | Create a five-minute presigned image upload URL. |
@@ -124,45 +138,27 @@ If Firehose rejects a batch, the API can return `503` after counters have alread
 
 ## Administration and raw analytics
 
-Open **Campaigns**, enter the admin key, and connect to list, create, edit, pause, or resume campaigns. Select a campaign to upload a PNG, JPEG, WebP, or GIF and add a creative. Uploads use five-minute presigned PUT URLs. File type is checked by declared MIME type, not by inspecting bytes or enforcing a size limit; this is a solo-operator demo, not a hardened upload service. The Overview campaign selector is currently a fixed list of seeded campaigns, so newly created campaigns appear in Campaigns but not automatically in Overview.
+Open **Campaigns**, create an account, and confirm the code sent to your email address. Sign in with your password and the new emailed verification code. The first time you sign in, enter the deployment key to join its administrator group. All members share access to the deployment's campaigns and analytics; the key is not a separate group or a direct API credential. Sign in again when the session expires. Select a campaign to upload a PNG, JPEG, WebP, or GIF and add a creative. Uploads use five-minute presigned PUT URLs. File type is checked by declared MIME type, not by inspecting bytes or enforcing a size limit; this is a solo-operator demo, not a hardened upload service. The Overview campaign selector is currently a fixed list of seeded campaigns, so newly created campaigns appear in Campaigns but not automatically in Overview.
 
 On AWS, events are sent to Firehose after the DynamoDB transaction and converted to Parquet in S3. Under **Campaigns**, connect and select **Open analytics pipeline**. **Load pipeline** shows Firehose status and up to 20 S3 object metadata entries; the listing reads at most two pages per prefix and labels an incomplete sample. Choose a predefined query and up to 31 UTC arrival dates, click **Run query**, then refresh its status to see results and bytes scanned. Queries never run automatically. Athena scans, S3 requests and stored results incur charges; the template caps each query at 100,000,000 scanned bytes, but a cancelled query can still incur charges. The local demo reports the cloud pipeline as unconfigured rather than simulating AWS.
 
-Athena queries in `backend/analytics.sql` also use projected UTC arrival-date partitions; adjust the example dates before running them. Firehose delivery is buffered for up to 15 minutes under normal conditions and may be delayed or duplicated; DynamoDB remains the live counter source. Provider-generated session IDs last for the provider instance and API URL. Events without a session ID are excluded from the session query. The deployer role was denied `athena:StartQueryExecution`; dashboard queries run as the scoped admin Lambda role, not as the deployer.
+Athena queries in `backend/analytics.sql` also use projected UTC arrival-date partitions; adjust the example dates before running them. Firehose delivery is buffered for up to 15 minutes under normal conditions and may be delayed or duplicated; DynamoDB remains the live counter source. Provider-generated session IDs last for the provider instance and API URL. Events without a session ID are excluded from the session query. In the earlier deployment, the deployer role was denied `athena:StartQueryExecution`; dashboard queries ran as the scoped admin Lambda role, not as the deployer.
 
 ## Deploy the full showcase to AWS
 
-Requires Node.js 24 LTS, npm, AWS CLI v2, AWS SAM CLI, authenticated **non-root** credentials, and permissions for the added Firehose, Glue, Athena, S3 and IAM resources. The existing permissions boundary must permit the new roles and actions. Review the template and costs before deploying; the script executes its change set without an interactive review and the additional resources are not covered by a hard spending cap.
+Requires Node.js 24 LTS, npm, AWS CLI v2, AWS SAM CLI and authenticated **non-root** AWS credentials. This procedure also works in another person's AWS account: the account owner must provide an appropriately authorized profile and approve the deployment and associated charges. Permissions must cover the template's Cognito, SES, Lambda, API Gateway, DynamoDB, Firehose, Glue, Athena, S3, CloudFormation, Budgets and IAM resources. The deployer needs permission to create Cognito's SES service-linked role if it does not already exist. Review the template and costs first; the script executes its change set without an interactive review, and budgets are not hard spending caps.
 
-The deployment profile **`pulsar`** assumes the non-root role `PulsarShowcaseDeployer`. The last deployment used a long-lived IAM access key in the local **`pulsar-iam`** profile as its source; it is stored in `~/.aws/credentials`. Replace it with short-lived credentials and deactivate the key once the replacement is verified. Profile names alone do not establish identity: verify the caller before any operation, and do not deploy as root.
+The current AWS implementation has not been deployed or live-verified. The existing live showcase is an older snapshot; historical checks against it do not verify this procedure or the current authentication flow.
 
-The operator's console sign-in is **https://061039759623.signin.aws.amazon.com/console**, IAM username `pulsar-operator`. The initial password was exposed in a previous chat; reset it if that has not already been done. Its original value is in macOS Keychain, service `pulsar-aws-console`, account `pulsar-operator`; password reset is required at first sign-in. Retrieve it privately with Keychain Access, or on the authorized workstation:
-
-```sh
-security find-generic-password -s pulsar-aws-console -a pulsar-operator -w
-```
-
-Do not paste its output, temporary credentials, or the alert recipient into source control or shared logs.
-
-To replace the long-lived source credentials, first sign in as `pulsar-operator` in the console and reset its initial password if required. The existing `pulsar-operator` profile may point to a root login; do not assume its name identifies its credentials. Authenticate the CLI as the operator, verify that identity, and then configure the role profile:
+In the target account and Region, verify an email address or domain in Amazon SES and use an address covered by that identity as the sender. Cognito email MFA requires the Essentials or Plus feature plan and your own SES configuration. While SES is in its sandbox, it can send only to verified recipients; request SES production access to email other users. Cognito cannot use email as both the MFA factor and the self-service password-recovery channel, so account recovery is administrator-managed.
 
 ```sh
-aws login --profile pulsar-operator
-aws sts get-caller-identity --profile pulsar-operator
-aws configure set role_arn arn:aws:iam::061039759623:role/PulsarShowcaseDeployer --profile pulsar
-aws configure set source_profile pulsar-operator --profile pulsar
-aws configure set credential_process '' --profile pulsar
-aws sts get-caller-identity --profile pulsar
-```
-
-The last command must show `assumed-role/PulsarShowcaseDeployer`, not `:root`. Register MFA for the operator in the AWS console before routine use.
-
-```sh
-export AWS_PROFILE=pulsar
+export AWS_PROFILE=your-non-root-profile
 export AWS_REGION=us-east-1
 export AWS_DEFAULT_REGION="$AWS_REGION"
 aws sts get-caller-identity --profile "$AWS_PROFILE" --region "$AWS_REGION"
-# Enter secrets locally without storing them in shell history:
+export SES_SENDER_EMAIL='noreply@example.com'
+export SES_IDENTITY_ARN='arn:aws:ses:us-east-1:123456789012:identity/example.com'
 read -r BUDGET_EMAIL
 read -rs ADMIN_KEY; echo
 export BUDGET_EMAIL ADMIN_KEY
@@ -170,9 +166,7 @@ npm run showcase:deploy
 unset BUDGET_EMAIL ADMIN_KEY
 ```
 
-The deployment script defaults to profile `pulsar`, region `us-east-1`, and stack **`pulsar-showcase`**. It rejects root and requires a valid account identity. `PERMISSIONS_BOUNDARY_ARN` may override the default `arn:aws:iam::<account-id>:policy/pulsar-showcase-runtime-boundary`; that policy must already exist. Each AWS/SAM command explicitly selects the profile and region.
-
-The showcase's separately managed `pulsar-showcase-runtime-boundary` policy was updated to allow the analytics actions for the current admin Lambda role only. The policy's `aws:PrincipalArn` condition names that role explicitly. If CloudFormation replaces the role, or the stack is deployed under another name, an IAM administrator must update the boundary to match the new role and resources; the template's inline permissions alone cannot override the boundary.
+Replace the example profile, email and SES identity ARN with values from the **target** account. `ADMIN_KEY` must contain at least 32 letters, digits, underscores or hyphens. Share it privately only with people who should join the administrator group. The script defaults to profile `pulsar`, region `us-east-1` and stack `pulsar-showcase`. It rejects root credentials. A permissions boundary is optional by default; if the target account requires one, set `PERMISSIONS_BOUNDARY_ARN` to an existing managed policy that permits the runtime actions. Each AWS/SAM command explicitly selects the profile and Region.
 
 Deployment builds and typechecks, validates the template, builds the Lambda artifacts, and deploys with `CAPABILITY_IAM`, the approved email, the permissions boundary, and tag `Project=pulsar-showcase`. It creates or verifies ownership of **`pulsar-showcase-artifacts-<account-id>-<region>`**, refusing to treat access-denied errors as a missing bucket. This artifact bucket intentionally lives outside the stack.
 
@@ -185,7 +179,7 @@ aws cloudformation describe-stacks --stack-name pulsar-showcase \
   --profile "$AWS_PROFILE" --region "$AWS_REGION" --query 'Stacks[0].Outputs'
 ```
 
-Open SiteUrl and follow the banner-click flow to check AWS counters. CORS is not authentication. Admin access uses a shared key and the public event API remains unauthenticated; there is no fraud protection or guaranteed delivery. Do not use these counters for billing or expose this as a production ad service.
+Open SiteUrl and follow the banner-click flow to check AWS counters. CORS is not authentication. The public event API remains unauthenticated; there is no fraud protection or guaranteed delivery. Do not use these counters for billing or expose this as a production ad service.
 
 ## Budget and best-effort shutdown
 
@@ -206,6 +200,7 @@ aws lambda delete-function-concurrency --function-name pulsar-showcase-post-even
 aws lambda delete-function-concurrency --function-name pulsar-showcase-get-stats --profile "$AWS_PROFILE" --region "$AWS_REGION"
 aws lambda delete-function-concurrency --function-name pulsar-showcase-site --profile "$AWS_PROFILE" --region "$AWS_REGION"
 aws lambda delete-function-concurrency --function-name pulsar-showcase-admin --profile "$AWS_PROFILE" --region "$AWS_REGION"
+aws lambda delete-function-concurrency --function-name pulsar-showcase-auth --profile "$AWS_PROFILE" --region "$AWS_REGION"
 ```
 
 
@@ -219,7 +214,7 @@ AWS_PROFILE=pulsar AWS_REGION=us-east-1 npm run showcase:delete -- --confirm
 
 The script rejects root, checks account ownership, empties the stack's site, raw-events and query-results buckets when present, deletes `pulsar-showcase`, and waits for deletion. Without `--confirm`, it refuses to delete anything. Teardown of the updated stack has not been exercised.
 
-The separately created artifact bucket and operator/deployer IAM identities are **intentionally retained**; teardown never deletes IAM access. Review billing and any remaining resources after deletion. If no stack or workflow still needs the artifact bucket, you may explicitly remove its objects and then the bucket (check the account and region first):
+The Cognito user pool is retained on stack deletion or replacement, while the stack's DynamoDB table and group memberships are deleted. The separately created artifact bucket and operator/deployer IAM identities are also **intentionally retained**. Review and explicitly remove retained resources only when they are no longer needed. If no stack or workflow still needs the artifact bucket, you may explicitly remove its objects and then the bucket (check the account and region first):
 
 ```sh
 ACCOUNT_ID="$(aws sts get-caller-identity --profile pulsar --region us-east-1 --query Account --output text)"

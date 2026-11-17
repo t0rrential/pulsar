@@ -21,7 +21,15 @@ Parameters:
     Type: String
     NoEcho: true
     MinLength: 32
-    Description: Secret admin API key; supply securely during deployment and rotate by updating the stack.
+    Description: Secret invitation key for joining the administrator group; not an API credential.
+  SesSenderEmail:
+    Type: String
+    Description: Sender address covered by the verified SES identity in the user pool region.
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+  SesIdentityArn:
+    Type: String
+    Description: ARN of the verified SES sender identity in the user pool region.
+    AllowedPattern: '^arn:[a-z0-9-]+:ses:[a-z0-9-]+:[0-9]{12}:identity/.+$'
 
 Conditions:
   HasDeploymentPermissionsBoundary: !Not [!Equals [!Ref DeploymentPermissionsBoundary, '']]
@@ -40,6 +48,46 @@ Globals:
         TABLE_NAME: !Ref AdPlatform
 
 Resources:
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Email-verified accounts with password and email MFA via the deployment's SES identity.
+        must:
+          - Require email MFA and never enable remembered devices.
+          - Preserve users on stack deletion or replacement.
+    Properties:
+      UserPoolTier: ESSENTIALS
+      UsernameAttributes: [email]
+      UsernameConfiguration:
+        CaseSensitive: false
+      AutoVerifiedAttributes: [email]
+      MfaConfiguration: 'ON'
+      EnabledMfas: [EMAIL_OTP]
+      AccountRecoverySetting:
+        RecoveryMechanisms:
+          - Name: admin_only
+            Priority: 1
+      EmailConfiguration:
+        EmailSendingAccount: DEVELOPER
+        From: !Ref SesSenderEmail
+        SourceArn: !Ref SesIdentityArn
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Public client for password authentication without exposing a client secret.
+        must:
+          - Server-side authorization must verify tokens and group membership.
+    Properties:
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows: [ALLOW_USER_PASSWORD_AUTH, ALLOW_REFRESH_TOKEN_AUTH]
+      PreventUserExistenceErrors: ENABLED
+
   AdPlatform:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Delete
@@ -75,7 +123,7 @@ Resources:
         AllowOrigins:
           - http://127.0.0.1:5173
         AllowMethods: [GET, POST, PUT, OPTIONS]
-        AllowHeaders: [Content-Type, x-admin-key]
+        AllowHeaders: [Content-Type, Authorization]
     Metadata:
       com.aws.cloudformation.Context:
         why: Public prototype API; origin restriction and modest throttling limit browser access and bursts, not authorization.
@@ -219,6 +267,66 @@ Resources:
       LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-admin'
       RetentionInDays: 7
 
+  AuthLogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
+    Properties:
+      LogGroupName: !Sub '/aws/lambda/${AWS::StackName}-auth'
+      RetentionInDays: 7
+
+  AuthFunction:
+    Type: AWS::Serverless::Function
+    DependsOn: AuthLogGroup
+    Properties:
+      FunctionName: !Sub '${AWS::StackName}-auth'
+      CodeUri: .
+      Handler: auth.handler
+      Environment:
+        Variables:
+          ADMIN_KEY: !Ref AdminKey
+          USER_POOL_ID: !Ref UserPool
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
+              Resource: !GetAtt AdPlatform.Arn
+      Events:
+        Register:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /auth/register, Method: POST}
+        Confirm:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /auth/confirm, Method: POST}
+        Login:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /auth/login, Method: POST}
+        Verify:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /auth/verify, Method: POST}
+        Logout:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /auth/logout, Method: POST}
+        Join:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /auth/join, Method: POST}
+        Me:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /auth/me, Method: GET}
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Account and invitation endpoints share the deployment's identity pool and membership table.
+        must:
+          - The invitation key grants membership only to an authenticated user.
+      BuildMethod: esbuild
+      BuildProperties:
+        Target: es2022
+        Format: cjs
+        OutExtension: ['.js=.cjs']
+        Minify: true
+        EntryPoints: [src/handlers/auth.ts]
+
   AdminFunction:
     Type: AWS::Serverless::Function
     DependsOn: AdminLogGroup
@@ -228,7 +336,8 @@ Resources:
       Handler: admin.handler
       Environment:
         Variables:
-          ADMIN_KEY: !Ref AdminKey
+          USER_POOL_ID: !Ref UserPool
+          USER_POOL_CLIENT_ID: !Ref UserPoolClient
           SITE_BUCKET: !Ref SiteBucket
           FIREHOSE_STREAM_NAME: !Ref EventStream
           RAW_EVENTS_BUCKET: !Ref RawEventsBucket
@@ -664,7 +773,7 @@ Resources:
       Environment:
         Variables:
           BUDGET_TOPIC_ARN: !Ref BudgetTopic
-          SHOWCASE_FUNCTION_NAMES: !Join [',', [!Ref GetAdFunction, !Ref PostEventsFunction, !Ref GetStatsFunction, !Ref SiteFunction, !Ref AdminFunction]]
+          SHOWCASE_FUNCTION_NAMES: !Join [',', [!Ref GetAdFunction, !Ref PostEventsFunction, !Ref GetStatsFunction, !Ref SiteFunction, !Ref AdminFunction, !Ref AuthFunction]]
       Policies:
         - Statement:
             - Effect: Allow
@@ -675,6 +784,7 @@ Resources:
                 - !GetAtt GetStatsFunction.Arn
                 - !GetAtt SiteFunction.Arn
                 - !GetAtt AdminFunction.Arn
+                - !GetAtt AuthFunction.Arn
       Events:
         Budget:
           Type: SNS
@@ -743,6 +853,12 @@ Outputs:
   TableName:
     Description: DynamoDB table for the seed script
     Value: !Ref AdPlatform
+  UserPoolId:
+    Description: Cognito user pool ID
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Description: Cognito public client ID
+    Value: !Ref UserPoolClient
   SiteBucketName:
     Description: Private S3 bucket for the built frontend and original creative assets
     Value: !Ref SiteBucket

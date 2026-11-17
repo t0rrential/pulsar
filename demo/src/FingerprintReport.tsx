@@ -20,7 +20,7 @@ export default function FingerprintReport({ apiUrl, adminKey, campaignId }: { ap
     const controller = new AbortController();
     setState({ status: 'loading' });
     fetch(`${apiUrl.replace(/\/+$/, '')}/campaigns/${encodeURIComponent(campaignId)}/fingerprints?days=${days}`, {
-      headers: { 'x-admin-key': adminKey }, signal: controller.signal,
+      headers: { authorization: `Bearer ${adminKey}` }, signal: controller.signal,
     }).then(async (response) => {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || 'Fingerprint report could not be loaded.');

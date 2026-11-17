@@ -23,7 +23,7 @@ export default function AnalyticsPipeline({ apiUrl, adminKey }: { apiUrl: string
 
   const request = useCallback(async <T,>(path: string, options: RequestInit = {}): Promise<T> => {
     const response = await fetch(`${apiUrl.replace(/\/+$/, '')}${path}`, {
-      ...options, headers: { 'x-admin-key': adminKey, ...(options.body ? { 'content-type': 'application/json' } : {}), ...options.headers },
+      ...options, headers: { authorization: `Bearer ${adminKey}`, ...(options.body ? { 'content-type': 'application/json' } : {}), ...options.headers },
     });
     const body = await response.json().catch(() => null);
     if (!response.ok) throw new Error(body?.error || `Request failed (${response.status}).`);

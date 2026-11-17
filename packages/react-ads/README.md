@@ -7,6 +7,8 @@ npm run build --workspace=@pulsar/react-ads
 npm pack --workspace=@pulsar/react-ads
 ```
 
+The package uses the public ad, event and stats routes; publishers do not provide an administrator deployment key. Campaign administration is separate: an authenticated account signs in with a password and mandatory emailed one-time code, then redeems the deployment key once to join that deployment's shared administrator group. The key is not an API credential. The existing live showcase is an older snapshot; the current AWS authentication implementation has not been deployed or live-verified.
+
 ```tsx
 import { AdProvider, AdSlot, AdStats, useAdEvents } from "@pulsar/react-ads";
 import type { Ad } from "@pulsar/react-ads";

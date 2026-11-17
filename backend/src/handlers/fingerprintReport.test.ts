@@ -1,18 +1,20 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { GetCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyEventV2 } from 'aws-lambda';
+import { authenticatedGet } from './authTestUtils.js';
 
 process.env.TABLE_NAME = 'fingerprint-report-test';
 process.env.ADMIN_KEY = 'secret';
 // The modules capture TABLE_NAME at load time, so initialize the environment first.
 const { db } = await import('../lib/db.js');
 const { handler } = await import('./admin.js');
+db.send = (async (command: unknown) => authenticatedGet(command)) as typeof db.send;
 
-function request(key = 'secret', days = '7'): APIGatewayProxyEventV2 {
+function request(key = 'test-session', days = '7'): APIGatewayProxyEventV2 {
   return {
     rawPath: '/campaigns/c1/fingerprints',
-    headers: { 'x-admin-key': key },
+    headers: { authorization: `Bearer ${key}` },
     queryStringParameters: { days },
     requestContext: { http: { method: 'GET' } },
   } as unknown as APIGatewayProxyEventV2;
@@ -20,7 +22,7 @@ function request(key = 'secret', days = '7'): APIGatewayProxyEventV2 {
 
 test('fingerprint reporting requires admin authentication and a valid reporting period', async () => {
   assert.equal((await handler(request('wrong'))).statusCode, 401);
-  assert.equal((await handler(request('secret', '31'))).statusCode, 400);
+  assert.equal((await handler(request('test-session', '31'))).statusCode, 400);
 });
 
 test('reports retained campaign fingerprints by day without counting expired or future records', async () => {
@@ -30,7 +32,8 @@ test('reports retained campaign fingerprints by day without counting expired or 
   const expiresAt = Math.floor(Date.now() / 1000) + 100;
   const first = 'a'.repeat(64), second = 'b'.repeat(64);
   let page = 0;
-  db.send = (async (command: ScanCommand) => {
+  db.send = (async (command: GetCommand | ScanCommand) => {
+    if (command instanceof GetCommand) return authenticatedGet(command);
     assert.ok(command instanceof ScanCommand);
     if (page++ === 0) return { Items: [
       { PK: `FINGERPRINT#${first}`, campaignId: 'c1', ts: Date.parse('2026-11-06T12:00:00Z'), expiresAt, browser: 'Chrome', device: 'Desktop' },
@@ -60,7 +63,7 @@ test('reports retained campaign fingerprints by day without counting expired or 
 
 test('does not present an incomplete scan as a complete fingerprint report', async () => {
   const originalSend = db.send;
-  db.send = (async () => ({ Items: [], ScannedCount: 500, LastEvaluatedKey: { PK: 'more', SK: 'more' } })) as typeof db.send;
+  db.send = (async (command: unknown) => authenticatedGet(command) ?? { Items: [], ScannedCount: 500, LastEvaluatedKey: { PK: 'more', SK: 'more' } }) as typeof db.send;
   try {
     assert.equal((await handler(request())).statusCode, 503);
   } finally { db.send = originalSend; }

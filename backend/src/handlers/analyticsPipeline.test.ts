@@ -4,10 +4,16 @@ import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { AthenaClient, GetQueryExecutionCommand, GetQueryResultsCommand, StartQueryExecutionCommand } from '@aws-sdk/client-athena';
 import { FirehoseClient } from '@aws-sdk/client-firehose';
 import { S3Client } from '@aws-sdk/client-s3';
-import { handler } from './analyticsPipeline.js';
+import { authenticatedGet } from './authTestUtils.js';
 
-function request(method: string, path: string, body?: unknown, key = 'secret'): APIGatewayProxyEventV2 {
-  return { rawPath: path, headers: { 'x-admin-key': key }, requestContext: { http: { method } }, body: body === undefined ? undefined : JSON.stringify(body) } as unknown as APIGatewayProxyEventV2;
+process.env.TABLE_NAME = 'analytics-test';
+// The database module reads its table name at import time.
+const { db } = await import('../lib/db.js');
+const { handler } = await import('./analyticsPipeline.js');
+db.send = (async (command: unknown) => authenticatedGet(command)) as typeof db.send;
+
+function request(method: string, path: string, body?: unknown, key = 'test-session'): APIGatewayProxyEventV2 {
+  return { rawPath: path, headers: { authorization: `Bearer ${key}` }, requestContext: { http: { method } }, body: body === undefined ? undefined : JSON.stringify(body) } as unknown as APIGatewayProxyEventV2;
 }
 function configure() {
   Object.assign(process.env, { ADMIN_KEY: 'secret', FIREHOSE_STREAM_NAME: 'stream', RAW_EVENTS_BUCKET: 'bucket', ATHENA_WORKGROUP: 'group', ATHENA_DATABASE: 'database' });

@@ -1,9 +1,10 @@
-import { randomUUID, timingSafeEqual, createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { GetCommand, PutCommand, QueryCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { db, tableName } from '../lib/db.js';
+import { authorized } from '../lib/auth.js';
 import { isIdentifier, json } from '../lib/http.js';
 import type { Campaign, Creative } from '../lib/types.js';
 import { fingerprintReport } from './fingerprintReport.js';
@@ -20,13 +21,6 @@ const imageExtensions: Record<string, string> = {
 type CampaignInput = Pick<Campaign, 'name' | 'status' | 'placements' | 'weight'>;
 type CreativeInput = Pick<Creative, 'imageUrl' | 'headline' | 'landingUrl' | 'width' | 'height'>;
 
-function authorized(event: APIGatewayProxyEventV2): boolean {
-  const expected = process.env.ADMIN_KEY;
-  const supplied = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === 'x-admin-key')?.[1];
-  if (!expected || !supplied) return false;
-  const hash = (value: string) => createHash('sha256').update(value).digest();
-  return timingSafeEqual(hash(expected), hash(supplied));
-}
 
 function bodyOf(event: APIGatewayProxyEventV2): Record<string, unknown> | undefined {
   try {
@@ -110,7 +104,7 @@ async function listCampaigns() {
 }
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> {
-  if (!authorized(event)) return json(401, { error: 'Unauthorized' });
+  if (!await authorized(event)) return json(401, { error: 'Unauthorized' });
   const method = event.requestContext.http.method;
   const path = event.rawPath;
   if (path === '/analytics/pipeline' || path === '/analytics/queries' || /^\/analytics\/queries\/[a-zA-Z0-9-]+$/.test(path)) {

@@ -1,9 +1,9 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
 import { AthenaClient, GetQueryExecutionCommand, GetQueryResultsCommand, StartQueryExecutionCommand } from '@aws-sdk/client-athena';
 import { DescribeDeliveryStreamCommand, FirehoseClient } from '@aws-sdk/client-firehose';
 import { ListObjectsV2Command, S3Client } from '@aws-sdk/client-s3';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { json } from '../lib/http.js';
+import { authorized } from '../lib/auth.js';
 
 const athena = new AthenaClient({});
 const firehose = new FirehoseClient({});
@@ -21,13 +21,6 @@ function dateValue(value: unknown): number | undefined {
   return Number.isFinite(date.getTime()) && date.toISOString().slice(0, 10) === value ? date.getTime() : undefined;
 }
 
-function authorized(event: APIGatewayProxyEventV2): boolean {
-  const expected = process.env.ADMIN_KEY;
-  const supplied = Object.entries(event.headers ?? {}).find(([key]) => key.toLowerCase() === 'x-admin-key')?.[1];
-  if (!expected || !supplied) return false;
-  const hash = (value: string) => createHash('sha256').update(value).digest();
-  return timingSafeEqual(hash(expected), hash(supplied));
-}
 
 function bodyOf(event: APIGatewayProxyEventV2): Record<string, unknown> | undefined {
   try {
@@ -62,7 +55,7 @@ async function recentObjects(bucket: string) {
 }
 
 export async function handler(event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> {
-  if (!authorized(event)) return json(401, { error: 'Unauthorized' });
+  if (!await authorized(event)) return json(401, { error: 'Unauthorized' });
   const stream = process.env.FIREHOSE_STREAM_NAME;
   const bucket = process.env.RAW_EVENTS_BUCKET;
   const workgroup = process.env.ATHENA_WORKGROUP;

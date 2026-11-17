@@ -29,6 +29,7 @@ for (const port of [apiPort, databasePort, storagePort]) {
 // This runner always uses a local database, never an authenticated AWS table.
 process.env.DYNAMODB_ENDPOINT = `http://127.0.0.1:${databasePort}`;
 process.env.TABLE_NAME = 'PulsarLocal';
+process.env.LOCAL_AUTH = '1';
 process.env.AWS_REGION ||= 'us-east-1';
 process.env.ADMIN_KEY ||= 'local-admin';
 process.env.SITE_BUCKET = 'pulsar-local';
@@ -102,11 +103,12 @@ try {
     KeySchema: [{ AttributeName: 'PK', KeyType: 'HASH' }, { AttributeName: 'SK', KeyType: 'RANGE' }],
   }));
 
-  const [{ handler: getAd }, { handler: postEvents }, { handler: getStats }, { handler: admin }, { seed }] = await Promise.all([
+  const [{ handler: getAd }, { handler: postEvents }, { handler: getStats }, { handler: admin }, { handler: auth }, { seed }] = await Promise.all([
     import('../backend/src/handlers/getAd.ts'),
     import('../backend/src/handlers/postEvents.ts'),
     import('../backend/src/handlers/getStats.ts'),
     import('../backend/src/handlers/admin.ts'),
+    import('../backend/src/handlers/auth.ts'),
     import('./seed.ts'),
   ]);
   await seed();
@@ -136,7 +138,7 @@ try {
   const api = http.createServer(async (request, response) => {
     if (request.headers.origin === webOrigin) response.setHeader('Access-Control-Allow-Origin', webOrigin);
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS');
-    response.setHeader('Access-Control-Allow-Headers', 'content-type, x-admin-key');
+    response.setHeader('Access-Control-Allow-Headers', 'content-type, authorization');
     response.setHeader('Cache-Control', 'no-store');
     if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
     try {
@@ -149,7 +151,8 @@ try {
       }
       const routeKey = `${request.method} ${url.pathname}`;
       const handler = routes[routeKey as keyof typeof routes] ??
-        (/^\/campaigns(?:\/[^/]+(?:\/(?:creatives|fingerprints))?)?$/.test(url.pathname) || url.pathname === '/uploads' || /^\/analytics\/(?:pipeline|queries(?:\/[a-zA-Z0-9-]+)?)$/.test(url.pathname) ? admin : undefined);
+        (/^\/auth\/(?:register|confirm|login|verify|join|me|logout)$/.test(url.pathname) ? auth :
+        /^\/campaigns(?:\/[^/]+(?:\/(?:creatives|fingerprints))?)?$/.test(url.pathname) || url.pathname === '/uploads' || /^\/analytics\/(?:pipeline|queries(?:\/[a-zA-Z0-9-]+)?)$/.test(url.pathname) ? admin : undefined);
       if (!handler) { response.writeHead(404, { 'content-type': 'application/json' }); response.end(JSON.stringify({ error: 'Not found' })); return; }
       const chunks: Buffer[] = [];
       let length = 0;

@@ -25,11 +25,15 @@ function main(): void {
   if (!email) throw new Error('Set BUDGET_EMAIL to the approved budget-alert address before deploying.');
   const adminKey = process.env.ADMIN_KEY;
   if (!adminKey || !/^[A-Za-z0-9_-]{32,}$/.test(adminKey)) throw new Error('Set ADMIN_KEY to at least 32 letters, digits, underscores or hyphens before deploying.');
+  const sender = process.env.SES_SENDER_EMAIL?.trim();
+  if (!sender || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(sender)) throw new Error('Set SES_SENDER_EMAIL to an address covered by a verified SES identity.');
+  const identityArn = process.env.SES_IDENTITY_ARN?.trim();
+  if (!identityArn || !/^arn:[a-z0-9-]+:ses:[a-z0-9-]+:\d{12}:identity\/.+$/.test(identityArn)) throw new Error('Set SES_IDENTITY_ARN to the verified SES identity ARN.');
   const identity = aws<{ Account: string; Arn: string }>(['sts', 'get-caller-identity']);
   if (!/^\d{12}$/.test(identity.Account) || !identity.Arn) throw new Error('AWS returned no valid account identity.');
   if (identity.Arn.endsWith(':root')) throw new Error('Root credentials are forbidden. Use a non-root AWS profile.');
   const account = identity.Account;
-  const boundary = process.env.PERMISSIONS_BOUNDARY_ARN || `arn:aws:iam::${account}:policy/pulsar-showcase-runtime-boundary`;
+  const boundary = process.env.PERMISSIONS_BOUNDARY_ARN || '';
 
   // Do not let a template update undo a previous budget/manual shutdown.
   const previous = spawnSync('aws', [...awsArgs, 'cloudformation', 'describe-stacks', '--stack-name', stack, '--output', 'json'], { cwd, env, encoding: 'utf8' });
@@ -39,11 +43,11 @@ function main(): void {
     if (!description.Stacks[0]?.Outputs?.some((output) => output.OutputKey === 'SiteUrl')) {
       throw new Error('Existing stack has no SiteUrl; inspect its status before updating.');
     }
-    for (const name of ['get-ad', 'post-events', 'get-stats', 'site', 'admin']) {
+    for (const name of ['get-ad', 'post-events', 'get-stats', 'site', 'admin', 'auth']) {
       const result = spawnSync('aws', [...awsArgs, 'lambda', 'get-function-concurrency', '--function-name', `${stack}-${name}`, '--output', 'json'], { cwd, env, encoding: 'utf8' });
       if (result.error) throw result.error;
       if (result.status !== 0) {
-        if (name === 'admin' && /\(ResourceNotFoundException\)/.test(result.stderr)) continue;
+        if ((name === 'admin' || name === 'auth') && /\(ResourceNotFoundException\)/.test(result.stderr)) continue;
         throw new Error(`Unable to inspect ${stack}-${name}: ${result.stderr || result.status}`);
       }
       const concurrency = (result.stdout.trim() ? JSON.parse(result.stdout) : {}) as { ReservedConcurrentExecutions?: number };
@@ -74,11 +78,12 @@ function main(): void {
     '--no-confirm-changeset', '--no-fail-on-empty-changeset', '--capabilities', 'CAPABILITY_IAM',
     '--tags', 'Project=pulsar-showcase', '--parameter-overrides',
     `DeploymentPermissionsBoundary=${boundary}`, `BudgetEmail=${email}`, `AdminKey=${adminKey}`,
+    `SesSenderEmail=${sender}`, `SesIdentityArn=${identityArn}`,
   ]);
 
   const description = aws<StackDescription>(['cloudformation', 'describe-stacks', '--stack-name', stack]);
   const outputs = Object.fromEntries((description.Stacks[0]?.Outputs || []).map((output) => [output.OutputKey, output.OutputValue]));
-  for (const key of ['ApiUrl', 'TableName', 'SiteBucketName', 'SiteUrl']) {
+  for (const key of ['ApiUrl', 'TableName', 'SiteBucketName', 'SiteUrl', 'UserPoolId', 'UserPoolClientId']) {
     if (!outputs[key]) throw new Error(`Stack output ${key} is missing.`);
   }
   run('npm', ['run', 'build', '--workspace=@pulsar/demo'], { ...env, VITE_API_URL: outputs.ApiUrl });
@@ -94,6 +99,7 @@ function main(): void {
   run('aws', [...awsArgs, 's3', 'cp', 'demo/dist/assets/', `${destination}assets/`, '--recursive', '--cache-control', 'public,max-age=31536000,immutable']);
   run('aws', [...awsArgs, 's3', 'cp', 'demo/dist/', destination, '--recursive', '--exclude', '*', '--include', '*.svg', '--cache-control', 'public,max-age=3600']);
   console.log(`Showcase: ${outputs.SiteUrl}`);
+  console.log(`Cognito user pool: ${outputs.UserPoolId}; client: ${outputs.UserPoolClientId}`);
 }
 
 try {

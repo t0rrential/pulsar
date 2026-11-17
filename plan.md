@@ -6,6 +6,8 @@ A small ad platform on AWS: an exportable React package that shows ads and track
 
 **Stack:** TypeScript everywhere · AWS SAM · API Gateway (HTTP API) · Lambda (Node.js) · DynamoDB · S3 · React + Vite · tsup
 
+This plan preserves historical results from an older deployed snapshot. The current account-authentication and AWS implementation has not been deployed or live-verified; historical cloud checks do not establish that it works in the current stack. See the README for the current local and deployment procedures.
+
 ---
 
 ## Phase 0 — Setup
@@ -39,7 +41,7 @@ ad-platform/
 
 Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counter, and the stats component shows the numbers. Ugly is fine.
 
-**Implementation status:** deployed AWS showcase at https://uhroesgpkb.execute-api.us-east-1.amazonaws.com/. Browser verification loaded ads, opened the advertiser link, and observed a `c3` click increase. An earlier shutdown-handler test stopped the four then-existing serving functions; service was restored. CloudFront requires account verification, so private S3 assets are served by Lambda through API Gateway HTTPS. Updated-stack teardown and real spend-triggered notification delivery have not been exercised.
+**Historical implementation status:** an earlier AWS showcase was deployed at https://uhroesgpkb.execute-api.us-east-1.amazonaws.com/. Browser verification loaded ads, opened the advertiser link, and observed a `c3` click increase. An earlier shutdown-handler test stopped the four then-existing serving functions; service was restored. CloudFront required account verification, so private S3 assets were served by Lambda through API Gateway HTTPS. These checks predate the current implementation; updated-stack teardown and real spend-triggered notification delivery have not been exercised.
 
 ### 1.1 Backend: SAM stack
 
@@ -53,7 +55,7 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
   - [x] Table name passed via environment variable
   - [x] Outputs for API, table, site bucket, public site URL, budget and cost guard
 - [x] Prepare `npm run showcase:deploy`: root rejection, explicit profile/region, owned artifact bucket, build/typecheck/SAM validation, deploy, frontend build, seed and site sync
-- [x] Run deployment and verify the public HTTPS site and real AWS counters
+- [x] Run deployment and verify the public HTTPS site and real AWS counters for the earlier snapshot.
 
 ### 1.2 Data model (single table)
 
@@ -109,7 +111,7 @@ Goal: a demo page shows a real ad from DynamoDB, clicking it increments a counte
 - [x] `Query` `PK = CAMPAIGN#c1 AND SK BETWEEN STATS#<start> AND STATS#<today>` for the last N UTC days
 - [x] Return `{ "days": [ { "date": "2026-10-17", "requests": 0, "impressions": 0, "viewable": 0, "clicks": 0, "conversions": 0 } ] }`
 - [x] Admin-only campaign fingerprint reports with bounded scans and explicit incomplete-history limitations.
-- [x] Admin-only Firehose/S3 status and predefined, bounded Athena queries; verified against the deployed showcase after updating the scoped admin Lambda permissions boundary.
+- [x] Admin-only Firehose/S3 status and predefined, bounded Athena queries; verified against the earlier deployed snapshot after updating the scoped admin Lambda permissions boundary, not against the current implementation.
 
 ### 1.4 Seed script
 
@@ -160,7 +162,7 @@ Goal: the prototype behaves like a real (small) product and is easy to demo and 
 - [x] Prepare full static-site deployment and browser cache policies (short HTML, immutable fingerprinted assets, one-hour SVGs)
 - [x] Prepare seven-day logs, the account-wide gross $5 monthly budget, and SNS-triggered zero-concurrency shutdown for website and API functions
 - [x] Verify the earlier Phase 1 site, API, configured budget subscribers and shutdown-handler effects in AWS; real spend-triggered notification delivery remains untested.
-- [ ] Complete remaining AWS checks. CloudFormation reports `UPDATE_COMPLETE`; the live dashboard, ad serving, event counters, admin authentication, image upload, consented fingerprint report and dashboard-driven Firehose → S3 → Athena path were checked. The admin Lambda runs scoped analytics queries; the deployer itself was denied direct Athena query execution. Updated-stack teardown and real spend-triggered notification delivery remain unverified.
+- [ ] Deploy and verify the current AWS implementation. For the earlier snapshot, CloudFormation reported `UPDATE_COMPLETE`; the live dashboard, ad serving, event counters, admin authentication, image upload, consented fingerprint report and dashboard-driven Firehose → S3 → Athena path were checked. Its admin Lambda ran scoped analytics queries; the deployer itself was denied direct Athena query execution. Current account authentication, updated-stack teardown and real spend-triggered notification delivery remain unverified.
 
 ### Package polish
 - [x] Props: `className`, `onLoad`, `onNoFill`, `onClick` callbacks on `AdSlot`.
@@ -181,12 +183,12 @@ Goal: the prototype behaves like a real (small) product and is easy to demo and 
 
 ## Phase 3 — Stretch goals (only after Phase 2)
 
-Admin and analytics flows were exercised locally and on the deployed showcase. Live verification included admin authentication, image upload, consented fingerprint reporting, Firehose status, S3 object listing, and an Athena query initiated from the dashboard.
+Admin and analytics flows were exercised locally and on the earlier deployed showcase. Historical live verification included admin authentication, image upload, consented fingerprint reporting, Firehose status, S3 object listing, and an Athena query initiated from the dashboard; it does not verify the current authentication implementation.
 
 ### A. Admin page
 - [x] Campaign administration endpoints.
 - [x] Presigned S3 PUT uploads.
-- [x] Shared admin-key protection.
+- [x] Account authentication with password and mandatory emailed one-time code. An authenticated account redeems the deployment key once to join the deployment's shared administrator group; the key is not a direct API credential. Local accounts use SMTP and disposable state; AWS uses Cognito Essentials with verified SES and has not been deployed or live-verified.
 - [x] Admin UI: list, create/edit, pause/resume, upload creative, and view stats.
 
 ### B. Raw events: Firehose → S3 → Athena
@@ -212,6 +214,6 @@ Admin and analytics flows were exercised locally and on the deployed showcase. L
 - Kinesis Data Streams (multiple independent consumers, replay)
 - Signed impression tokens / click-fraud protection
 - AWS WAF
-- Cognito auth and multi-tenant publishers
+- Multi-tenant publishers (Cognito authentication is implemented for the shared administrator group)
 - Budget pacing, frequency capping, targeting
 - Sandboxed iframes for third-party HTML creatives
