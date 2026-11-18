@@ -128,9 +128,13 @@ The website Lambda serves private S3 assets through API Gateway HTTPS, without r
 2. Sign in with your password. When email verification is enabled, registration also requires email confirmation and every sign-in requires a fresh emailed code.
 3. Redeem the deployment’s invitation key once to join its shared administrator group.
 
+The registration form checks for 12–256 characters, uppercase and lowercase letters, a number, a symbol, and no spaces before submitting. These new-password checks do not restrict existing passwords at sign-in.
+
 `REQUIRE_EMAIL_VERIFICATION=false` disables both email confirmation and email MFA for a temporary password-only demo. The account UI displays the active mode using `GET /auth/config`. **This mode has no two-factor protection, and email addresses are unverified identifiers—not proof of ownership.** Keep password authentication and group enrollment enabled; do not use demo mode for sensitive accounts.
 
 All group members share the deployment’s campaigns and analytics. The invitation key is **not an API credential**; admin requests require an authenticated member. Sign in again when the session expires. AWS uses Cognito; email-enabled mode delivers through SES, while local email-enabled mode uses SMTP. Account recovery on AWS is administrator-managed in either mode; disabling verification does not reset an existing password. Set the flag back to `true` and redeploy to restore email checks.
+
+**Open administrator demos only:** set `AUTO_FILL_DEPLOYMENT_KEY=true` to prefill the enrollment key after sign-in. Every registered account can then join the administrator group and edit shared campaigns. The key is fetched through authenticated `GET /auth/me`, never embedded in the frontend build or public sign-in configuration. The default is `false`; redeployment preserves the existing setting when unset. Disabling autofill does not revoke existing memberships or invalidate a previously disclosed key.
 
 Select a campaign to edit it, attach a creative, inspect **Browser fingerprints**, or open the **analytics pipeline**. Creative uploads accept declared PNG, JPEG, WebP, or GIF MIME types via five-minute presigned PUT URLs. Content bytes and upload size are not validated; this is not a hardened upload service. Newly created campaigns appear in Campaigns, but Overview currently uses a fixed list of seeded campaigns.
 
