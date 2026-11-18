@@ -7,7 +7,7 @@ npm run build --workspace=@pulsar/react-ads
 npm pack --workspace=@pulsar/react-ads
 ```
 
-The package uses the public ad, event and stats routes; publishers do not provide an administrator deployment key. Campaign administration is separate: an authenticated account signs in with a password and mandatory emailed one-time code, then redeems the deployment key once to join that deployment's shared administrator group. The key is not an API credential. The existing live showcase is an older snapshot; the current AWS authentication implementation has not been deployed or live-verified.
+The package uses the public ad, event and stats routes; publishers do not provide an administrator deployment key. Campaign administration is separate: an authenticated account redeems the deployment key once to join that deployment's shared administrator group. The key is not an API credential. Email confirmation and emailed MFA are enabled by default; a deployment can explicitly select `REQUIRE_EMAIL_VERIFICATION=false` for a password-only demo with unverified email addresses and no two-factor protection.
 
 ```tsx
 import { AdProvider, AdSlot, AdStats, useAdEvents } from "@pulsar/react-ads";

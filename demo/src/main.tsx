@@ -9,7 +9,7 @@ import { Badge } from './components/ui/badge';
 import { Button } from './components/ui/button';
 import './theme.css';
 
-const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/$/, '');
+const apiUrl = (import.meta.env.VITE_API_URL || (import.meta.env.PROD ? window.location.origin : 'http://localhost:3001')).replace(/\/$/, '');
 const campaigns = [
   { id: 'c1', label: 'Weekend escapes', placement: 'Sidebar', artwork: 'escape.svg' },
   { id: 'c2', label: 'Outside every day', placement: 'Sidebar', artwork: 'outside.svg' },

@@ -1,81 +1,80 @@
-# Pulsar ad platform
+<p align="center">
+  <img src="assets/pulsar-logo.svg" alt="Pulsar logo" width="96" height="96">
+</p>
 
-A React ad package, a publisher showcase, and a SAM serverless API backed by DynamoDB. Original SVG creatives and the website live in private S3; a Lambda serves them through API Gateway HTTPS. This account requires AWS verification before creating CloudFront resources, so the showcase does not depend on CloudFront.
+# Pulsar
 
-**Existing live showcase:** https://uhroesgpkb.execute-api.us-east-1.amazonaws.com/ — this is an older, separately deployed snapshot. The current repository's account authentication and AWS configuration have not been deployed or live-verified there.
+A React ad platform with campaign management, configurable account verification, consent-based fingerprint reporting, and serverless AWS analytics.
 
-## Run locally
+This workspace contains the reusable **`@pulsar/react-ads`** package, a **React dashboard and publisher preview**, and an **AWS SAM backend**. Run the demo locally with disposable storage or deploy the stack into your own AWS account.
 
-Requires Node.js 24 LTS, npm, and a running Docker daemon. No AWS credentials are needed for the local demo. Account emails require a real SMTP service with TLS/STARTTLS:
+> **Prototype, not a production ad network.** Public tracking endpoints have no fraud protection, event delivery is best-effort, and the spending guard is not a hard cap. Do not use these counters for billing.
+
+[Quick start](#quick-start) · [React integration](#react-integration) · [Architecture](#architecture) · [AWS deployment](#deploy-to-aws) · [Operations](#operations)
+
+## What’s included
+
+| Area | Capabilities |
+| --- | --- |
+| Publisher integration | Weighted ad selection, sidebar and banner placements, batched events, viewability, and conversion tracking. |
+| Dashboard | UTC daily metrics, campaign comparison, desktop/mobile publisher preview, and system/light/dark themes. |
+| Administration | Password-based accounts, optional email confirmation/MFA, shared administrator-group enrollment, campaign editing, and creative uploads. |
+| Analytics | Live DynamoDB counters, opt-in browser fingerprint reports, and on-demand Athena queries over Firehose-delivered Parquet. |
+| AWS operations | Private S3 assets served over HTTPS, API throttling, seven-day logs, budget alerts, and best-effort Lambda shutdown. |
+
+Deployment URLs and invitation keys are intentionally not published here. Removing a link is **not** access control: the deployed site and public API routes remain reachable.
+
+## Quick start
+
+**Requires:** Node.js 24 LTS, npm, and a running Docker daemon. No AWS credentials are needed locally.
 
 ```sh
 npm install
+REQUIRE_EMAIL_VERIFICATION=false npm run dev
+```
+
+Open **http://127.0.0.1:5173**. The runner creates disposable DynamoDB Local and S3Mock containers, then seeds six campaigns, eight creatives, and seven days of labeled synthetic statistics. Four campaigns start active and two paused. New interactions add real events to those local counters.
+
+**Optional email verification and MFA:** these are enabled by default when `REQUIRE_EMAIL_VERIFICATION` is unset. To use them locally, configure a real SMTP service with TLS/STARTTLS and an authorized sender:
+
+```sh
 read -rs SMTP_URL; echo
 export SMTP_URL
 export SMTP_FROM='noreply@example.com'
-npm run dev
+REQUIRE_EMAIL_VERIFICATION=true npm run dev
 ```
 
-Set `SMTP_URL` to the SMTP connection URL supplied by your mail provider, including credentials when required, and `SMTP_FROM` to an authorized sender address. The prompt avoids placing the URL in shell history. Treat it as a secret. Without both settings, account email cannot be sent; there is no MFA bypass.
+The prompt keeps SMTP credentials out of shell history. Treat the URL as a secret. Email-enabled mode fails closed without both SMTP settings. The explicit `false` setting enables a password-only demo instead; it sends no account emails.
 
-Open **http://127.0.0.1:5173**. The API listens at `http://localhost:3001`, DynamoDB Local at `127.0.0.1:8000`, and S3Mock at `127.0.0.1:9000`. Set `API_PORT`, `DB_PORT`, or `STORAGE_PORT` to change these; set `VITE_API_URL` to the API URL if changing `API_PORT`. If Vite uses another port, set `LOCAL_WEB_ORIGIN` to its exact origin and `CREATIVE_BASE_URL` to that origin followed by `/creatives`.
+### Try the end-to-end flow
 
-The runner starts disposable Docker containers for DynamoDB Local and S3Mock, creates the table and bucket, and seeds six campaigns, eight creatives, and seven days of synthetic sample statistics. Four campaigns start active and two paused. The dashboard labels local data as sample data; subsequent interactions add real events to those local counters. Stopping the runner deletes all local data, including accounts and group memberships. The local group enrollment key defaults to `local-admin`; override it with `ADMIN_KEY`. This key and the object store are for local development only. Original SVG creatives are served by Vite. Remove a cloud `demo/.env` override before using this local-only option.
+1. In **Overview**, select **Find your next adventure (`c3`)** and note its click total.
+2. Open **Publisher preview** and inspect the sidebar and banner at desktop or mobile widths.
+3. Click the banner to open the advertiser page in a new tab.
+4. Return to **Overview** and select **Refresh data** after the event batch is recorded. The `c3` click total increases.
+5. Open **Campaigns**, create an account, sign in, and join the administrator group using the local key, **`local-admin`**. With email verification enabled, complete the emailed confirmation and sign-in codes too.
 
-1. Open **Overview**, select **Find your next adventure (`c3`)**, and note its click total.
-2. Open **Publisher preview**. Use the desktop or mobile width controls to inspect one `sidebar` and one `banner` slot.
-3. Click the banner; it opens an advertiser page in a new tab.
-4. Return to **Overview** and use **Refresh data** after the event is recorded. The `c3` click total increases.
-5. Use **Refresh ads** in Publisher preview to select new creatives. Sidebar campaigns are weighted; the banner always belongs to `c3` in the default seed.
+**Ctrl-C deletes local data**, including accounts and group memberships. Override the local enrollment key with `ADMIN_KEY`; never reuse the local default in AWS.
 
-Synthetic history is written only to the disposable local database. The normal seed script writes campaign and creative definitions, preserves existing counters, and does not fabricate AWS traffic; cloud counters reflect recorded activity. **Reseeding overwrites the six fixed campaign definitions and their seeded creatives**, including edits made through Campaigns. Other campaigns, uploaded objects, and existing counters are not reset.
+<details>
+<summary>Local ports and configuration</summary>
 
-The shadcn/ui dashboard shows filled requests, rendered impressions, viewable impressions, clicks, conversions and CTR. CTR is total clicks divided by rendered impressions. Viewable means at least half the ad remained visible for one continuous second while the document was visible. Metrics absent from an older API response are shown as unavailable rather than zero.
+| Service | Default |
+| --- | --- |
+| Vite dashboard | `http://127.0.0.1:5173` |
+| API | `http://localhost:3001` |
+| DynamoDB Local | `127.0.0.1:8000` |
+| S3Mock | `127.0.0.1:9000` |
 
-Use the theme selector in the header to follow the system appearance or choose light or dark. The preference is saved in the browser.
+Set `API_PORT`, `DB_PORT`, or `STORAGE_PORT` to change service ports. If changing `API_PORT`, also set `VITE_API_URL`. If Vite uses a different origin, set `LOCAL_WEB_ORIGIN` to that exact origin and `CREATIVE_BASE_URL` to the same origin followed by `/creatives`.
 
-Events are batched and counted by UTC day. Event IDs are deduplicated for approximately two days, or 30 days for fingerprinted events. A genuine page reload or slot remount counts a new request and impression; React StrictMode's effect replay does not. The in-memory queue and beacons do not guarantee delivery when a page closes.
+Original SVG creatives are served by Vite. Remove any cloud `demo/.env` override before running locally. The local analytics screen reports the AWS pipeline as unconfigured; it does not simulate Firehose or Athena.
 
-Browser fingerprinting is optional and off until the visitor opts in. It hashes browser characteristics together with the publisher's origin, so the same signals on different sites produce different identifiers. A fingerprint is pseudonymous, not anonymous: different browsers may collide and browser changes may change the identifier. It is not suitable as proof of identity.
+</details>
 
-The browser hashes the page origin, user agent, language, platform, hardware concurrency, screen dimensions and color depth, and time zone locally using SHA-256. With consent it sends the resulting 64-character hexadecimal digest and coarse browser family and device category alongside ordinary event fields; it does not send the underlying fingerprint inputs or raw user agent. The origin is not a secret, and hashing does not make the identifier anonymous. Publishers integrating the package must obtain and manage appropriate consent themselves; the showcase's checkbox applies only to its own site.
+## React integration
 
-Fingerprint associations are stored separately in DynamoDB under `PK = FINGERPRINT#<fingerprint>` and `SK = EVENT#<eventId>`, with `expiresAt` set 30 days after ingestion. After connecting under **Campaigns**, select a campaign and scroll to **Browser fingerprints** for approximate distinct fingerprints, daily events, first observed versus previously seen within retained history, and the latest hashes with coarse browser/device labels. Older associations have unknown labels. The 30-day view has no earlier comparison window, so returning is zero. The report ignores expired rows and scans at most 10,000 table items; it fails rather than presenting partial counts when this limit is exceeded, and displays at most 200 fingerprints. DynamoDB TTL deletion is asynchronous and can occur after expiry. Withdrawing consent stops future collection but does not immediately delete existing associations or recall events already sent. Fingerprints, browser/device labels and raw input signals are not sent to Firehose or stored in S3 analytics history.
-
-### Try fingerprint reporting
-
-1. In **Publisher preview**, enable **Allow fingerprinting on this site** only if you consent to the collection described above. Copy the displayed digest if you want to find your own row.
-2. Select **Refresh ads** and allow a few seconds for the event batch to be sent. A filled ad generates real activity; no-fill responses do not create an impression.
-3. Open **Campaigns**, sign in and join with the deployment key if needed, select the campaign that served the ad, and scroll to **Browser fingerprints**. For the default seeded banner, select **Find your next adventure** (`c3`). Use **Refresh** if its event is not yet visible.
-4. The table displays the digest, coarse browser and device, last-seen time and event count. Select **Last 7 days** or **Last 30 days**; the report only covers activity within its retained history.
-5. Turn the consent checkbox off when finished. This prevents future fingerprint collection but does not erase existing records.
-
-The local demo uses `local-admin`; keep any deployment key private and do not show it during a recording. The older live snapshot is not a verification of the current authentication flow. Its report reflects shared activity, not the local synthetic history.
-
-## Workspace
-
-- `backend/template.yaml`: API, admin and static-site Lambdas, DynamoDB, private S3, Firehose, Glue, Athena, budget notifications and a shutdown Lambda.
-- `backend/src/handlers`: ad serving, events, stats, administration, static assets and the SNS-triggered cost guard.
-- `packages/react-ads`: exportable ESM/CJS React package with TypeScript declarations.
-- `demo`: Vite publisher, campaign dashboard, and administration views, using Tailwind and shadcn/ui components.
-- `scripts/seed.ts`: repeatable campaign/creative seed; preserves existing counters.
-- `scripts/local.ts`: local database and HTTP adapter for the Lambda handlers.
-- `scripts/deploy-showcase.ts` and `scripts/delete-showcase.ts`: explicit-profile deployment and confirmation-gated teardown; updated-stack teardown has not been exercised on AWS.
-- `backend/analytics.sql`: Athena queries over buffered raw events.
-
-The optional `presentation/` directory is ignored by Git. When present locally, `demo-script.md` is the live walkthrough, `current-script.md` is the matching slide narration, and `pulsar-current.pdf` / `pulsar-current.pptx` are the current deck. The `pulsar-midpoint` slides and older graphs are historical snapshots. Presentation files are not included in a clone unless distributed separately.
-
-The current speaking scripts are also available together as `presentation/pulsar-current-scripts.pdf`; `presentation/pulsar-current-pack.zip` bundles the deck, scripts, and standalone architecture diagram. To refresh the materials when their sources change:
-
-1. Render `presentation/pulsar-architecture.dot` to `pulsar-architecture.svg` and `.png` with Graphviz.
-2. Run `python3 presentation/generate-current.py` for the HTML slides and editable PowerPoint, `python3 presentation/generate-poster.py` for the poster, and `python3 presentation/generate-scripts.py` for the combined scripts HTML. The deck and poster generators require `python-pptx`, Pillow, and matplotlib.
-3. Print `current-slides.html` and `current-scripts.html` to their matching PDFs with backgrounds enabled; refresh the poster preview and presentation ZIP when distributing them.
-
-The charts use `presentation/synthetic-snapshot.json`, a labeled synthetic campaign snapshot; they are not real visitor data.
-
-## React package
-
-The package is available as `@pulsar/react-ads` inside this workspace; it has not been published to npm.
+The package is available inside this workspace but **has not been published to npm**. React and React DOM 18 or 19 are peer dependencies.
 
 ```tsx
 import { AdProvider, AdSlot, AdStats } from '@pulsar/react-ads';
@@ -83,21 +82,141 @@ import { AdProvider, AdSlot, AdStats } from '@pulsar/react-ads';
 export function Publisher({ apiUrl }: { apiUrl: string }) {
   return (
     <AdProvider apiUrl={apiUrl}>
-      <AdSlot placement="sidebar" />
+      <AdSlot placement="sidebar" width={300} height={250} />
       <AdStats campaignId="c1" days={7} />
     </AdProvider>
   );
 }
 ```
 
-See [the package README](packages/react-ads/README.md) for props, fingerprint consent, viewability, batching, conversion events, and delivery limitations.
-
-Build and create an installable package tarball:
+Publishers use the public ad, event, and stats routes; they do **not** need an administrator key. See the [package README](packages/react-ads/README.md) for props, conversion events, batching, consent handling, and delivery limitations.
 
 ```sh
 npm run build --workspace=@pulsar/react-ads
 npm pack --workspace=@pulsar/react-ads
 ```
+
+## Architecture
+
+```mermaid
+flowchart LR
+  UI["React dashboard / publisher"] --> API["API Gateway + Lambda"]
+  API --> DB["DynamoDB: campaigns, counters, memberships"]
+  API --> Auth["Cognito + SES: accounts and email MFA"]
+  API --> Assets["Private S3: website and creatives"]
+  API --> Firehose["Firehose"]
+  Firehose --> Raw["Private S3: Parquet events"]
+  Raw --> Athena["Glue + Athena"]
+```
+
+The website Lambda serves private S3 assets through API Gateway HTTPS, without requiring CloudFront. DynamoDB is the live counter source; buffered raw analytics are separate.
+
+### Workspace
+
+| Path | Responsibility |
+| --- | --- |
+| [`packages/react-ads`](packages/react-ads) | Reusable React components, hooks, ESM/CJS builds, and TypeScript declarations. |
+| [`demo`](demo) | Vite dashboard, publisher preview, account screens, and administration UI built with Tailwind and shadcn/ui. |
+| [`backend/template.yaml`](backend/template.yaml) | SAM infrastructure, identity, storage, analytics, and cost controls. |
+| [`backend/src/handlers`](backend/src/handlers) | Ad serving, events, stats, authentication, administration, static hosting, and shutdown handlers. |
+| [`backend/analytics.sql`](backend/analytics.sql) | Example Athena queries using UTC arrival-date partitions. |
+| [`scripts`](scripts) | Local runner, campaign seed, deployment, and confirmation-gated teardown. |
+
+## Accounts and administration
+
+1. Create an account under **Campaigns**.
+2. Sign in with your password. When email verification is enabled, registration also requires email confirmation and every sign-in requires a fresh emailed code.
+3. Redeem the deployment’s invitation key once to join its shared administrator group.
+
+`REQUIRE_EMAIL_VERIFICATION=false` disables both email confirmation and email MFA for a temporary password-only demo. The account UI displays the active mode using `GET /auth/config`. **This mode has no two-factor protection, and email addresses are unverified identifiers—not proof of ownership.** Keep password authentication and group enrollment enabled; do not use demo mode for sensitive accounts.
+
+All group members share the deployment’s campaigns and analytics. The invitation key is **not an API credential**; admin requests require an authenticated member. Sign in again when the session expires. AWS uses Cognito; email-enabled mode delivers through SES, while local email-enabled mode uses SMTP. Account recovery on AWS is administrator-managed in either mode; disabling verification does not reset an existing password. Set the flag back to `true` and redeploy to restore email checks.
+
+Select a campaign to edit it, attach a creative, inspect **Browser fingerprints**, or open the **analytics pipeline**. Creative uploads accept declared PNG, JPEG, WebP, or GIF MIME types via five-minute presigned PUT URLs. Content bytes and upload size are not validated; this is not a hardened upload service. Newly created campaigns appear in Campaigns, but Overview currently uses a fixed list of seeded campaigns.
+
+## Metrics, consent, and analytics
+
+- **CTR** is clicks divided by rendered impressions. The dashboard also shows filled requests, viewable impressions, and conversions. Metrics missing from older API responses are unavailable, not zero.
+- **Viewable** means at least 50% of an ad stayed visible for one continuous second while the document was visible.
+- Events are batched and counted by **UTC day**. A real reload or slot remount counts a new request and impression; React StrictMode effect replay does not.
+- Event IDs are deduplicated for approximately two days, or 30 days for fingerprinted events. Client queues and final beacons cannot guarantee delivery.
+- **Browser fingerprinting is off until consent.** The browser hashes its origin and browser characteristics locally, sending only the SHA-256 digest and coarse browser/device labels with ordinary event fields. Fingerprints are approximate, pseudonymous identifiers, not proof of identity.
+- Fingerprint associations have a **30-day TTL** in DynamoDB. Withdrawal stops future collection, but does not erase prior records or recall sent events; physical TTL deletion can be delayed. Fingerprints, category labels, and raw fingerprint inputs are excluded from Firehose/S3 analytics. Publishers must manage their own consent.
+
+To try reporting, enable **Allow fingerprinting on this site** in Publisher preview, refresh the ads, then open the served campaign’s **Browser fingerprints** report under Campaigns. The seeded banner belongs to `c3`. Reports cover up to 30 days, show at most 200 fingerprints, and fail rather than show partial counts if the 10,000-item scan limit is exceeded. Returning means previously seen within retained history; the full 30-day view has no earlier comparison window.
+
+On AWS, **Open analytics pipeline → Load pipeline** shows Firehose status and a bounded S3 metadata sample. Run a predefined Athena query for up to 31 inclusive UTC arrival dates, then refresh for results and bytes scanned. Queries never run automatically. The template caps each query at 100,000,000 scanned bytes, but cancelled queries can still incur charges.
+
+Firehose normally buffers delivery for up to 15 minutes; delays and duplicates are possible. A Firehose failure can return `503` after DynamoDB counters were committed. Retrying the same event IDs avoids double-counting and can retry pending delivery, but there is no independent replay worker. Events without a session ID are excluded from session queries.
+
+## API reference
+
+Routes are relative to your stack’s `ApiUrl`. CORS is not authentication.
+
+| Access | Routes | Purpose |
+| --- | --- | --- |
+| Public | `GET /ad?placement=sidebar` | Select an active ad (`200`) or return no fill (`204`). |
+| Public | `POST /events` | Accept 1–100 events, up to 64 KiB decoded JSON (`202`); supports `text/plain` beacons. |
+| Public | `GET /stats?campaignId=c1&days=7` | UTC daily counters, zero-filled; `days` is 1–365. |
+| Public | `GET /auth/config` | Report whether email confirmation and email MFA are required. |
+| Account | `POST /auth/register`, `/auth/confirm`, `/auth/login`, `/auth/verify` | Register and sign in. Password-only mode returns a session directly and disables the confirmation/MFA endpoints. |
+| Account | `GET /auth/me`, `POST /auth/join`, `/auth/logout` | Inspect membership, redeem an invitation, or revoke the session. |
+| Admin member | `GET /campaigns`, `POST /campaigns`, `PUT /campaigns/{id}` | List, create, and edit campaigns. |
+| Admin member | `POST /campaigns/{id}/creatives`, `POST /uploads` | Attach creatives and request presigned uploads. |
+| Admin member | `GET /campaigns/{id}/fingerprints?days=7` | Retained fingerprint report; `days` is 1–30. |
+| Admin member | `GET /analytics/pipeline`, `POST /analytics/queries`, `GET /analytics/queries/{id}` | Inspect delivery, start a predefined query, and retrieve its status/results. |
+
+Events contain `eventId`, `type` (`impression`, `viewable`, `click`, or `conversion`), `impressionId`, `campaignId`, `creativeId`, `placement`, and millisecond timestamp `ts`. `sessionId` and a 64-character lowercase hexadecimal `fingerprint` are optional. Fingerprinted events may include coarse `browser` and `device` labels; labels without a fingerprint are rejected. Identifier fields allow 1–128 letters, digits, underscores, or hyphens. Counter increments, deduplication, and fingerprint associations share a DynamoDB transaction.
+
+## Deploy to AWS
+
+**Requires:** Node.js 24 LTS, npm, AWS CLI v2, AWS SAM CLI, and an authorized **non-root** AWS profile. Deployment into someone else’s account uses their approved profile, sender identity, and budget address—not this project’s account or invitation key.
+
+Before deploying:
+
+- Review [`backend/template.yaml`](backend/template.yaml), IAM permissions, and charges. The script executes its change set without an interactive review.
+- Verify an email address or domain in **SES in the target Region**. Use an authorized sender covered by that identity. Cognito email MFA requires the Essentials or Plus feature plan and your own SES configuration.
+- In the SES sandbox, recipients must also be verified. Request production access to email other users.
+- Ensure the deployer can manage the template’s Cognito, SES service-linked role, Lambda, API Gateway, DynamoDB, Firehose, Glue, Athena, S3, CloudFormation, Budgets, SNS, logs, and IAM resources.
+
+Set `REQUIRE_EMAIL_VERIFICATION=false` for a password-only demo, or `true` for email confirmation and MFA. The deployment script defaults to `true`. Existing SES sender configuration is retained in either mode so email checks can be restored; password-only mode sends no account emails and requires no SES recipient verification.
+
+```sh
+export AWS_PROFILE=your-non-root-profile
+export AWS_REGION=us-east-1
+export AWS_DEFAULT_REGION="$AWS_REGION"
+aws sts get-caller-identity --profile "$AWS_PROFILE" --region "$AWS_REGION"
+
+export SES_SENDER_EMAIL='noreply@example.com'
+export SES_IDENTITY_ARN='arn:aws:ses:us-east-1:123456789012:identity/example.com'
+export REQUIRE_EMAIL_VERIFICATION=false
+read -r BUDGET_EMAIL
+read -rs ADMIN_KEY; echo
+export BUDGET_EMAIL ADMIN_KEY
+npm run showcase:deploy
+unset BUDGET_EMAIL ADMIN_KEY
+```
+
+Replace every example with values from the **target account**. `ADMIN_KEY` must contain at least 32 letters, digits, underscores, or hyphens; share it privately with intended administrators only. The script defaults to profile `pulsar`, Region `us-east-1`, and stack `pulsar-showcase`, and rejects root credentials. Set `PERMISSIONS_BOUNDARY_ARN` if the account requires a boundary; it must permit the runtime actions.
+
+The script builds and typechecks, validates and builds SAM, deploys with `CAPABILITY_IAM`, then builds the site with same-origin API requests and uploads it to private S3. It checks for an existing Lambda shutdown before proceeding. The artifact bucket, `pulsar-showcase-artifacts-<account-id>-<region>`, lives outside the stack.
+
+**Redeployment also reseeds the six fixed campaigns and their creatives**, overwriting edits to those definitions. Existing counters, other campaigns, and uploaded objects are preserved; synthetic history is local-only. Review before using this command on a customized deployment.
+
+**Custom domain (optional).** Request a DNS-validated ACM certificate covering your hostname in the API’s Region, then set `SITE_DOMAIN_NAME` and `SITE_CERTIFICATE_ARN` before deployment. The certificate must be issued first. Existing domain settings are preserved on redeployment when these variables are unset.
+
+The stack creates a regional API Gateway domain and a root mapping to the existing API. At your DNS provider, add a CNAME from your hostname to the `SiteDnsTarget` output. Keep the certificate-validation CNAME for automatic renewal. DNS records and the certificate remain outside the stack; remove them separately when retiring the hostname. `DefaultApiUrl` retains the native API Gateway endpoint.
+
+The deployment script passes `AdminKey` as a SAM process argument. CloudFormation masks the parameter, but local process inspection or failed-command output can expose it. Deploy from a trusted workstation and rotate the key if exposed.
+
+Retrieve your URL privately from stack outputs rather than publishing it in documentation:
+
+```sh
+aws cloudformation describe-stacks --stack-name pulsar-showcase \
+  --profile "$AWS_PROFILE" --region "$AWS_REGION" --query 'Stacks[0].Outputs'
+```
+
+Open `SiteUrl`, test the banner-click flow, and verify registration, sign-in, and group enrollment. In email-enabled mode, also verify email confirmation and MFA delivery before treating that flow as verified.
 
 ## Checks
 
@@ -110,117 +229,52 @@ sam validate --lint --template-file backend/template.yaml --region us-east-1
 PATH="$PWD/node_modules/.bin:$PATH" npm run build:backend -- --region us-east-1
 ```
 
-`build` creates the React package and static demo (`demo/dist`); `build:backend` creates `.aws-sam/build` using SAM and esbuild.
+`build` creates the React package and `demo/dist`; `build:backend` creates `.aws-sam/build`.
 
-## API
+## Operations
 
-All routes are relative to `ApiUrl`. The ad, event, and stats routes are public. Administration requires an authenticated account that has joined this deployment's administrator group; a deployment key alone is not an API credential. CORS does not provide authentication.
+### Budget and shutdown
 
-| Route | Purpose |
-| --- | --- |
-| `GET /ad?placement=sidebar` | Select an active campaign and creative for a placement; returns an ad on `200` or no fill on `204`. |
-| `POST /events` | Record a batch of 1–100 events, up to 64 KiB decoded JSON; returns `202` when accepted. JSON is parsed even with `text/plain` for browser beacons. |
-| `GET /stats?campaignId=c1&days=7` | Return daily UTC counters; `days` defaults to 7 and must be 1–365. Missing days are zero-filled. |
-| `POST /auth/register`, `POST /auth/confirm` | Create an account and confirm its email address. |
-| `POST /auth/login`, `POST /auth/verify` | Sign in with a password and the emailed one-time code. |
-| `GET /auth/me`, `POST /auth/join`, `POST /auth/logout` | Check membership, join with the deployment key, or revoke the session. |
-| `GET /campaigns`, `POST /campaigns`, `PUT /campaigns/{id}` | List, create, and edit campaigns. |
-| `POST /campaigns/{id}/creatives` | Attach a creative to an existing campaign. |
-| `POST /uploads` | Create a five-minute presigned image upload URL. |
-| `GET /campaigns/{id}/fingerprints?days=7` | Admin-only retained fingerprint report; `days` is 1–30. |
-| `GET /analytics/pipeline` | Admin-only Firehose status and bounded S3 object metadata listing. |
-| `POST /analytics/queries` | Start a predefined Athena query for at most 31 inclusive UTC arrival dates. |
-| `GET /analytics/queries/{id}` | Read status and results for a query in the configured workgroup. |
+**AWS cannot guarantee a $5 hard cap.** The template creates an account-wide **US$5 gross monthly spend** budget, excluding credits and refunds. Other workloads count too. Actual-spend alerts at **80% ($4)** and **100% ($5)** email the operator and publish to SNS. The cost guard sets the website, ad API, admin, and authentication Lambda reserved concurrency to zero.
 
-Each event has an `eventId`, `type` (`impression`, `viewable`, `click`, or `conversion`), `impressionId`, `campaignId`, `creativeId`, `placement`, and millisecond timestamp `ts`. `sessionId` and a 64-character lowercase hexadecimal `fingerprint` are optional. A fingerprinted event can additionally carry `browser` (`Chrome`, `Edge`, `Firefox`, `Safari`, `Other`) and `device` (`Mobile`, `Tablet`, `Desktop`, `Other`); labels without a fingerprint are rejected. Identifier fields use 1–128 letters, digits, underscores, or hyphens. Deduplication and the counter increment happen in a DynamoDB transaction; fingerprint associations use that same transaction.
+Billing, evaluation, and delivery are delayed. Requests may incur costs before shutdown; storage, API Gateway, buffered Firehose delivery, and other charges can continue afterward. API throttling is 5 requests/second with burst 20; it is not bot protection. Monitor billing yourself and remove the deployment when it is not needed.
 
-If Firehose rejects a batch, the API can return `503` after counters have already been updated. Retrying the same event IDs avoids double-counting and can retry pending raw delivery, but there is no independent replay worker. Client queues and beacon delivery are best-effort, and raw delivery can be delayed or duplicated.
+<details>
+<summary>Manual recovery after shutdown</summary>
 
-## Administration and raw analytics
-
-Open **Campaigns**, create an account, and confirm the code sent to your email address. Sign in with your password and the new emailed verification code. The first time you sign in, enter the deployment key to join its administrator group. All members share access to the deployment's campaigns and analytics; the key is not a separate group or a direct API credential. Sign in again when the session expires. Select a campaign to upload a PNG, JPEG, WebP, or GIF and add a creative. Uploads use five-minute presigned PUT URLs. File type is checked by declared MIME type, not by inspecting bytes or enforcing a size limit; this is a solo-operator demo, not a hardened upload service. The Overview campaign selector is currently a fixed list of seeded campaigns, so newly created campaigns appear in Campaigns but not automatically in Overview.
-
-On AWS, events are sent to Firehose after the DynamoDB transaction and converted to Parquet in S3. Under **Campaigns**, connect and select **Open analytics pipeline**. **Load pipeline** shows Firehose status and up to 20 S3 object metadata entries; the listing reads at most two pages per prefix and labels an incomplete sample. Choose a predefined query and up to 31 UTC arrival dates, click **Run query**, then refresh its status to see results and bytes scanned. Queries never run automatically. Athena scans, S3 requests and stored results incur charges; the template caps each query at 100,000,000 scanned bytes, but a cancelled query can still incur charges. The local demo reports the cloud pipeline as unconfigured rather than simulating AWS.
-
-Athena queries in `backend/analytics.sql` also use projected UTC arrival-date partitions; adjust the example dates before running them. Firehose delivery is buffered for up to 15 minutes under normal conditions and may be delayed or duplicated; DynamoDB remains the live counter source. Provider-generated session IDs last for the provider instance and API URL. Events without a session ID are excluded from the session query. In the earlier deployment, the deployer role was denied `athena:StartQueryExecution`; dashboard queries ran as the scoped admin Lambda role, not as the deployer.
-
-## Deploy the full showcase to AWS
-
-Requires Node.js 24 LTS, npm, AWS CLI v2, AWS SAM CLI and authenticated **non-root** AWS credentials. This procedure also works in another person's AWS account: the account owner must provide an appropriately authorized profile and approve the deployment and associated charges. Permissions must cover the template's Cognito, SES, Lambda, API Gateway, DynamoDB, Firehose, Glue, Athena, S3, CloudFormation, Budgets and IAM resources. The deployer needs permission to create Cognito's SES service-linked role if it does not already exist. Review the template and costs first; the script executes its change set without an interactive review, and budgets are not hard spending caps.
-
-The current AWS implementation has not been deployed or live-verified. The existing live showcase is an older snapshot; historical checks against it do not verify this procedure or the current authentication flow.
-
-In the target account and Region, verify an email address or domain in Amazon SES and use an address covered by that identity as the sender. Cognito email MFA requires the Essentials or Plus feature plan and your own SES configuration. While SES is in its sandbox, it can send only to verified recipients; request SES production access to email other users. Cognito cannot use email as both the MFA factor and the self-service password-recovery channel, so account recovery is administrator-managed.
+First review account spend, budget notifications, and cost-guard logs. Recover only if you deliberately accept further charges. Redeployment is not recovery, and another notification may stop the site again.
 
 ```sh
-export AWS_PROFILE=your-non-root-profile
-export AWS_REGION=us-east-1
-export AWS_DEFAULT_REGION="$AWS_REGION"
-aws sts get-caller-identity --profile "$AWS_PROFILE" --region "$AWS_REGION"
-export SES_SENDER_EMAIL='noreply@example.com'
-export SES_IDENTITY_ARN='arn:aws:ses:us-east-1:123456789012:identity/example.com'
-read -r BUDGET_EMAIL
-read -rs ADMIN_KEY; echo
-export BUDGET_EMAIL ADMIN_KEY
-npm run showcase:deploy
-unset BUDGET_EMAIL ADMIN_KEY
+for function in get-ad post-events get-stats site admin auth; do
+  aws lambda delete-function-concurrency \
+    --function-name "pulsar-showcase-$function" \
+    --profile "$AWS_PROFILE" --region "$AWS_REGION"
+done
 ```
 
-Replace the example profile, email and SES identity ARN with values from the **target** account. `ADMIN_KEY` must contain at least 32 letters, digits, underscores or hyphens. Share it privately only with people who should join the administrator group. The script defaults to profile `pulsar`, region `us-east-1` and stack `pulsar-showcase`. It rejects root credentials. A permissions boundary is optional by default; if the target account requires one, set `PERMISSIONS_BOUNDARY_ARN` to an existing managed policy that permits the runtime actions. Each AWS/SAM command explicitly selects the profile and Region.
+</details>
 
-Deployment builds and typechecks, validates the template, builds the Lambda artifacts, and deploys with `CAPABILITY_IAM`, the approved email, the permissions boundary, and tag `Project=pulsar-showcase`. It creates or verifies ownership of **`pulsar-showcase-artifacts-<account-id>-<region>`**, refusing to treat access-denied errors as a missing bucket. This artifact bucket intentionally lives outside the stack.
+### Tear down
 
-It then builds the demo, seeds the AWS table, and syncs the site. Existing `uploads/` objects and counters are preserved, but the fixed seed campaign and creative definitions are overwritten. The `AdminKey` CloudFormation parameter is masked in CloudFormation, but the deployment script passes it as a SAM process argument and failed commands can expose it in error output. Other users on the machine may be able to inspect it during deployment. Use a trusted workstation and rotate the key if exposed.
-
-The outputs include `ApiUrl`, `TableName`, `SiteBucketName`, `SiteUrl`, `BudgetName`, and `CostGuardFunctionName`:
+**Destructive:** this permanently deletes campaign counters, group memberships, uploaded creatives, raw events, query results, and site assets.
 
 ```sh
-aws cloudformation describe-stacks --stack-name pulsar-showcase \
-  --profile "$AWS_PROFILE" --region "$AWS_REGION" --query 'Stacks[0].Outputs'
+AWS_PROFILE=your-non-root-profile AWS_REGION=us-east-1 \
+  npm run showcase:delete -- --confirm
 ```
 
-Open SiteUrl and follow the banner-click flow to check AWS counters. CORS is not authentication. The public event API remains unauthenticated; there is no fraud protection or guaranteed delivery. Do not use these counters for billing or expose this as a production ad service.
+The script checks account ownership, empties the stack’s S3 buckets, deletes the stack, and waits for deletion. Without `--confirm`, it refuses to delete anything. Teardown of the updated stack has not been exercised on AWS.
 
-## Budget and best-effort shutdown
+**Retained deliberately:** the Cognito user pool, the separately created artifact bucket, and operator/deployer IAM identities. Review these resources separately and remove them only when no longer needed. Deleting the stack removes DynamoDB memberships even though Cognito accounts remain.
 
-**AWS cannot guarantee a $5 hard cap.** The account-wide monthly budget is **US$5 gross spend**, excluding credits and refunds; other workloads in the account count too. Actual-spend thresholds at **80% ($4)** and **100% ($5)** send email and publish to SNS. The cost guard checks the expected SNS topic and sets ad API, admin and website Lambda reserved concurrency to zero.
+## Presentation materials
 
-Billing data, budget evaluation and SNS delivery are delayed. Requests may incur costs before shutdown; DynamoDB/S3 storage, API Gateway and other charges can continue afterward. This is a best-effort reduction in exposure, not a guaranteed ceiling. The stack also uses seven-day log retention, API throttling at 5 requests/second with burst 20, and no paid WAF/custom domain. Monitor billing yourself and delete the stack when it is not needed.
+`presentation/` is optional, Git-ignored, and not included in a clone unless distributed separately:
 
-### Manual recovery after shutdown
+- `current/`: current deck, narration, walkthrough, and generation assets.
+- `poster/`: editable 42 × 56-inch poster and rendered preview.
+- `archive/`: historical presentations and evidence.
 
-**First review current account spend, the reason for shutdown, and remaining monthly exposure. Only recover if you deliberately accept further charges.** Check Budgets, billing and the cost-guard Lambda logs. A new notification may stop the showcase again. Re-deploying is not the recovery procedure, and removing concurrency limits restores the API's normal ability to scale.
+Keep `pulsar-architecture-supplied.png` and `pulsar-logo.png` beside the slide generator, then run `python3 presentation/current/generate-current.py` and `python3 presentation/current/generate-scripts.py`. Print the generated HTML to PDF with backgrounds enabled and refresh `pulsar-current-pack.zip` when distributing it. The deck generator requires `python-pptx` and Pillow.
 
-Using the non-root profile, restore the API and website functions:
-
-```sh
-export AWS_PROFILE=pulsar AWS_REGION=us-east-1
-aws lambda delete-function-concurrency --function-name pulsar-showcase-get-ad --profile "$AWS_PROFILE" --region "$AWS_REGION"
-aws lambda delete-function-concurrency --function-name pulsar-showcase-post-events --profile "$AWS_PROFILE" --region "$AWS_REGION"
-aws lambda delete-function-concurrency --function-name pulsar-showcase-get-stats --profile "$AWS_PROFILE" --region "$AWS_REGION"
-aws lambda delete-function-concurrency --function-name pulsar-showcase-site --profile "$AWS_PROFILE" --region "$AWS_REGION"
-aws lambda delete-function-concurrency --function-name pulsar-showcase-admin --profile "$AWS_PROFILE" --region "$AWS_REGION"
-aws lambda delete-function-concurrency --function-name pulsar-showcase-auth --profile "$AWS_PROFILE" --region "$AWS_REGION"
-```
-
-
-## Tear down
-
-Stop local processes with Ctrl-C; Docker containers and local data are removed. For the AWS showcase, this command **permanently deletes campaign counters, uploaded creatives, raw events, query results and site assets**:
-
-```sh
-AWS_PROFILE=pulsar AWS_REGION=us-east-1 npm run showcase:delete -- --confirm
-```
-
-The script rejects root, checks account ownership, empties the stack's site, raw-events and query-results buckets when present, deletes `pulsar-showcase`, and waits for deletion. Without `--confirm`, it refuses to delete anything. Teardown of the updated stack has not been exercised.
-
-The Cognito user pool is retained on stack deletion or replacement, while the stack's DynamoDB table and group memberships are deleted. The separately created artifact bucket and operator/deployer IAM identities are also **intentionally retained**. Review and explicitly remove retained resources only when they are no longer needed. If no stack or workflow still needs the artifact bucket, you may explicitly remove its objects and then the bucket (check the account and region first):
-
-```sh
-ACCOUNT_ID="$(aws sts get-caller-identity --profile pulsar --region us-east-1 --query Account --output text)"
-ARTIFACT_BUCKET="pulsar-showcase-artifacts-${ACCOUNT_ID}-us-east-1"
-aws s3api head-bucket --bucket "$ARTIFACT_BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --profile pulsar --region us-east-1
-# Destructive and optional; run only after reviewing the bucket's contents.
-aws s3 rm "s3://$ARTIFACT_BUCKET/" --recursive --profile pulsar --region us-east-1
-aws s3api delete-bucket --bucket "$ARTIFACT_BUCKET" --expected-bucket-owner "$ACCOUNT_ID" --profile pulsar --region us-east-1
-```
+For the poster, keep `pulsar-logo.png` in `presentation/poster/` and run `python3 presentation/poster/generate-poster.py`. The tracked README logo is independent of these optional files.

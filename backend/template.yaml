@@ -30,9 +30,43 @@ Parameters:
     Type: String
     Description: ARN of the verified SES sender identity in the user pool region.
     AllowedPattern: '^arn:[a-z0-9-]+:ses:[a-z0-9-]+:[0-9]{12}:identity/.+$'
+  RequireEmailVerification:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: Require email confirmation and email MFA; false is an explicit password-only demo mode.
+  AutoFillDeploymentKey:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['true', 'false']
+    Description: Open demo only. Reveal the enrollment key to signed-in nonmembers so any account can join the administrator group.
+  SiteDomainName:
+    Type: String
+    Default: ''
+    Description: Optional custom hostname; requires an issued regional ACM certificate.
+  SiteCertificateArn:
+    Type: String
+    Default: ''
+    Description: ARN of an issued ACM certificate in this Region covering SiteDomainName; managed outside this stack.
 
 Conditions:
   HasDeploymentPermissionsBoundary: !Not [!Equals [!Ref DeploymentPermissionsBoundary, '']]
+  EmailVerificationEnabled: !Equals [!Ref RequireEmailVerification, 'true']
+  HasSiteDomain: !And
+    - !Not [!Equals [!Ref SiteDomainName, '']]
+    - !Not [!Equals [!Ref SiteCertificateArn, '']]
+    
+Rules:
+  SiteDomainCertificatePair:
+    Assertions:
+      - Assert: !Or
+          - !Equals [!Ref SiteDomainName, '']
+          - !Not [!Equals [!Ref SiteCertificateArn, '']]
+        AssertDescription: A custom hostname requires an issued certificate.
+      - Assert: !Or
+          - !Equals [!Ref SiteCertificateArn, '']
+          - !Not [!Equals [!Ref SiteDomainName, '']]
+        AssertDescription: A certificate requires its custom hostname.
 
 Globals:
   Function:
@@ -54,18 +88,18 @@ Resources:
     UpdateReplacePolicy: Retain
     Metadata:
       com.aws.cloudformation.Context:
-        why: Email-verified accounts with password and email MFA via the deployment's SES identity.
+        why: Password accounts with optional email confirmation and MFA; password-only mode is an explicit demo opt-out.
         must:
-          - Require email MFA and never enable remembered devices.
+          - Require email MFA when verification is enabled and never enable remembered devices.
           - Preserve users on stack deletion or replacement.
     Properties:
       UserPoolTier: ESSENTIALS
       UsernameAttributes: [email]
       UsernameConfiguration:
         CaseSensitive: false
-      AutoVerifiedAttributes: [email]
-      MfaConfiguration: 'ON'
-      EnabledMfas: [EMAIL_OTP]
+      AutoVerifiedAttributes: !If [EmailVerificationEnabled, [email], !Ref 'AWS::NoValue']
+      MfaConfiguration: !If [EmailVerificationEnabled, 'ON', 'OFF']
+      EnabledMfas: !If [EmailVerificationEnabled, [EMAIL_OTP], !Ref 'AWS::NoValue']
       AccountRecoverySetting:
         RecoveryMechanisms:
           - Name: admin_only
@@ -287,12 +321,20 @@ Resources:
           ADMIN_KEY: !Ref AdminKey
           USER_POOL_ID: !Ref UserPool
           USER_POOL_CLIENT_ID: !Ref UserPoolClient
+          REQUIRE_EMAIL_VERIFICATION: !Ref RequireEmailVerification
+          AUTO_FILL_DEPLOYMENT_KEY: !Ref AutoFillDeploymentKey
       Policies:
         - Statement:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem]
               Resource: !GetAtt AdPlatform.Arn
+            - Effect: Allow
+              Action: cognito-idp:AdminConfirmSignUp
+              Resource: !GetAtt UserPool.Arn
       Events:
+        Configuration:
+          Type: HttpApi
+          Properties: {ApiId: !Ref HttpApi, Path: /auth/config, Method: GET}
         Register:
           Type: HttpApi
           Properties: {ApiId: !Ref HttpApi, Path: /auth/register, Method: POST}
@@ -846,9 +888,39 @@ Resources:
             - SubscriptionType: EMAIL
               Address: !Ref BudgetEmail
 
+  SiteDomain:
+    Type: AWS::ApiGatewayV2::DomainName
+    Condition: HasSiteDomain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Exposes the existing HTTP API through an optional regional HTTPS hostname without adding another hosting layer.
+        must: Use an issued ACM certificate from this Region; retain its external DNS validation record for automatic renewal.
+    Properties:
+      DomainName: !Ref SiteDomainName
+      DomainNameConfigurations:
+        - CertificateArn: !Ref SiteCertificateArn
+          EndpointType: REGIONAL
+          SecurityPolicy: TLS_1_2
+      Tags:
+        Project: !Ref AWS::StackName
+  SiteApiMapping:
+    Type: AWS::ApiGatewayV2::ApiMapping
+    Condition: HasSiteDomain
+    Metadata:
+      com.aws.cloudformation.Context:
+        why: Serves frontend assets and authenticated API routes from the same custom origin.
+        must: Map the root path to the generated default stage so throttling and budget shutdown still cover this hostname.
+    Properties:
+      ApiId: !Ref HttpApi
+      DomainName: !Ref SiteDomain
+      Stage: !Ref HttpApiApiGatewayDefaultStage
+
 Outputs:
   ApiUrl:
     Description: HTTP API base URL
+    Value: !If [HasSiteDomain, !Sub 'https://${SiteDomainName}', !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}']
+  DefaultApiUrl:
+    Description: Native API Gateway HTTPS endpoint
     Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
   TableName:
     Description: DynamoDB table for the seed script
@@ -864,7 +936,11 @@ Outputs:
     Value: !Ref SiteBucket
   SiteUrl:
     Description: Public HTTPS showcase URL
-    Value: !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+    Value: !If [HasSiteDomain, !Sub 'https://${SiteDomainName}', !Sub 'https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}']
+  SiteDnsTarget:
+    Condition: HasSiteDomain
+    Description: CNAME target for the custom hostname at your DNS provider
+    Value: !GetAtt SiteDomain.RegionalDomainName
   BudgetName:
     Description: Account-wide monthly spending budget with delayed, best-effort shutdown
     Value: !Ref MonthlyBudget

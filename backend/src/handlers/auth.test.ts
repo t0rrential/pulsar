@@ -33,10 +33,20 @@ test('local registration fails closed without an email sender', async () => {
   assert.equal((await handler(request('POST', '/auth/register', {}, { email: 'person@example.com', password: 'long-password-123' }))).statusCode, 503);
 });
 
-test('local registration, email MFA, membership and replay protection', async () => {
+for (const emailVerificationRequired of [true, false]) {
+test(emailVerificationRequired ? 'local email MFA, membership and replay protection' : 'password-only local registration and membership without email', async () => {
+  const envNames = ['LOCAL_AUTH', 'REQUIRE_EMAIL_VERIFICATION', 'AUTO_FILL_DEPLOYMENT_KEY', 'SMTP_URL', 'SMTP_FROM', 'ADMIN_KEY'] as const;
+  const previousEnv = envNames.map((name) => process.env[name]);
   process.env.LOCAL_AUTH = '1';
-  process.env.SMTP_URL = 'smtp://localhost:2525';
-  process.env.SMTP_FROM = 'sender@example.com';
+  process.env.REQUIRE_EMAIL_VERIFICATION = String(emailVerificationRequired);
+  delete process.env.AUTO_FILL_DEPLOYMENT_KEY;
+  if (emailVerificationRequired) {
+    process.env.SMTP_URL = 'smtp://localhost:2525';
+    process.env.SMTP_FROM = 'sender@example.com';
+  } else {
+    delete process.env.SMTP_URL;
+    delete process.env.SMTP_FROM;
+  }
   process.env.ADMIN_KEY = 'join-key';
   const records = new Map<string, Record<string, any>>();
   const messages: string[] = [];
@@ -79,43 +89,61 @@ test('local registration, email MFA, membership and replay protection', async ()
   try {
     const email = 'person@example.com', password = 'long-password-123';
     const post = (path: string, body: unknown, token?: string) => handler(request('POST', path, token ? { authorization: `Bearer ${token}` } : {}, body));
+    const signIn = async () => {
+      const login = await post('/auth/login', { email, password });
+      assert.equal(login.statusCode, 200);
+      if (!emailVerificationRequired) return JSON.parse(login.body!).token as string;
+      const challenge = JSON.parse(login.body!).challenge;
+      const code = /\b\d{6}\b/.exec(messages.at(-1)!)![0];
+      const verified = await post('/auth/verify', { email, challenge, code });
+      assert.equal(verified.statusCode, 200);
+      assert.equal((await post('/auth/verify', { email, challenge, code })).statusCode, 400);
+      return JSON.parse(verified.body!).token as string;
+    };
     assert.equal((await post('/auth/register', { email, password })).statusCode, 200);
-    const confirmation = /\b\d{6}\b/.exec(messages[0])![0];
-    assert.equal((await post('/auth/confirm', { email, code: confirmation })).statusCode, 200);
-    assert.equal((await post('/auth/confirm', { email, code: confirmation })).statusCode, 400);
-    const login = await post('/auth/login', { email, password });
-    assert.equal(login.statusCode, 200);
-    const challenge = JSON.parse(login.body!).challenge;
-    const code = /\b\d{6}\b/.exec(messages[1])![0];
-    const verified = await post('/auth/verify', { email, challenge, code });
-    assert.equal(verified.statusCode, 200);
-    const token = JSON.parse(verified.body!).token;
-    assert.equal((await post('/auth/verify', { email, challenge, code })).statusCode, 400);
+    if (emailVerificationRequired) {
+      const confirmation = /\b\d{6}\b/.exec(messages[0])![0];
+      assert.equal((await post('/auth/confirm', { email, code: confirmation })).statusCode, 200);
+      assert.equal((await post('/auth/confirm', { email, code: confirmation })).statusCode, 400);
+    }
+    assert.equal((await post('/auth/login', { email, password: 'wrong-password' })).statusCode, 401);
+    const token = await signIn();
     const headers = { authorization: `Bearer ${token}` };
-    assert.equal(JSON.parse((await handler(request('GET', '/auth/me', headers))).body!).member, false);
+    const privateAccount = JSON.parse((await handler(request('GET', '/auth/me', headers))).body!);
+    assert.equal(privateAccount.member, false);
+    assert.equal(privateAccount.deploymentKey, undefined);
+    process.env.AUTO_FILL_DEPLOYMENT_KEY = 'true';
+    assert.equal((await handler(request('GET', '/auth/me'))).statusCode, 401);
+    assert.equal(JSON.parse((await handler(request('GET', '/auth/config'))).body!).deploymentKey, undefined);
+    const demoAccount = JSON.parse((await handler(request('GET', '/auth/me', headers))).body!);
+    assert.equal(demoAccount.deploymentKey, 'join-key');
+    assert.equal((await admin(request('GET', '/campaigns', headers))).statusCode, 401);
     assert.equal((await post('/auth/join', { key: 'wrong' }, token)).statusCode, 403);
-    assert.equal((await post('/auth/join', { key: 'join-key' }, token)).statusCode, 200);
+    assert.equal((await post('/auth/join', { key: demoAccount.deploymentKey }, token)).statusCode, 200);
     const memberId = [...records.keys()].find((id) => id.startsWith('AUTH#MEMBER#'))!;
     const member = records.get(memberId)!;
     records.delete(memberId);
     assert.equal((await admin(request('GET', '/campaigns', headers))).statusCode, 401);
     records.set(memberId, member);
-    assert.equal(JSON.parse((await handler(request('GET', '/auth/me', headers))).body!).member, true);
+    const memberAccount = JSON.parse((await handler(request('GET', '/auth/me', headers))).body!);
+    assert.equal(memberAccount.member, true);
+    assert.equal(memberAccount.deploymentKey, undefined);
     assert.equal((await post('/auth/logout', {}, token)).statusCode, 200);
     assert.equal((await handler(request('GET', '/auth/me', headers))).statusCode, 401);
-    const secondLogin = await post('/auth/login', { email, password });
-    const secondChallenge = JSON.parse(secondLogin.body!).challenge;
-    const secondCode = /\b\d{6}\b/.exec(messages[2])![0];
-    const secondVerified = await post('/auth/verify', { email, challenge: secondChallenge, code: secondCode });
-    const secondToken = JSON.parse(secondVerified.body!).token;
+    const secondToken = await signIn();
     const session = [...records.entries()].find(([id]) => id.startsWith('AUTH#SESSION#'))!;
     session[1].expiresAt = 0;
     assert.equal((await handler(request('GET', '/auth/me', { authorization: `Bearer ${secondToken}` }))).statusCode, 401);
   } finally {
     db.send = originalSend;
     nodemailer.createTransport = originalTransport;
+    envNames.forEach((name, index) => {
+      const value = previousEnv[index];
+      if (value === undefined) delete process.env[name]; else process.env[name] = value;
+    });
   }
 });
+}
 
 test('Cognito first-login tokens are discarded until a fresh email challenge', async () => {
   delete process.env.LOCAL_AUTH;

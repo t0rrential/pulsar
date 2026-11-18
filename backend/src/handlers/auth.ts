@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomInt, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { CognitoIdentityProviderClient, ConfirmSignUpCommand, InitiateAuthCommand, RespondToAuthChallengeCommand, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
+import { AdminConfirmSignUpCommand, CognitoIdentityProviderClient, ConfirmSignUpCommand, InitiateAuthCommand, RespondToAuthChallengeCommand, SignUpCommand } from '@aws-sdk/client-cognito-identity-provider';
 import { DeleteCommand, GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { CognitoJwtVerifier } from 'aws-jwt-verify';
 import nodemailer from 'nodemailer';
@@ -52,6 +52,12 @@ async function putSession(userId: string, email: string) {
   await db.send(new PutCommand({ TableName: tableName, Item: { ...key('SESSION', digest(token)), userId, email, expiresAt: now() + 3600 }, ConditionExpression: 'attribute_not_exists(PK)' }));
   return token;
 }
+async function cognitoUserId(idToken: string, email: string, requireVerifiedEmail: boolean): Promise<string | undefined> {
+  const verifier = CognitoJwtVerifier.create({ userPoolId: process.env.USER_POOL_ID!, clientId: process.env.USER_POOL_CLIENT_ID!, tokenUse: 'id' });
+  const claims = await verifier.verify(idToken);
+  if ((requireVerifiedEmail && claims.email_verified !== true) || typeof claims.email !== 'string' || claims.email.toLowerCase() !== email) return undefined;
+  return `cognito#${claims.sub}`;
+}
 async function takeChallenge(challenge: string, email: string) {
   const challengeKey = key('CHALLENGE', digest(challenge));
   const result = await db.send(new DeleteCommand({ TableName: tableName, Key: challengeKey,
@@ -72,6 +78,9 @@ export async function handler(event: APIGatewayProxyEventV2) {
   const path = event.rawPath.replace(/\/+$/, '');
   const method = event.requestContext.http.method;
   try {
+    const emailVerificationRequired = process.env.REQUIRE_EMAIL_VERIFICATION !== 'false';
+    if (path === '/auth/config') return method === 'GET' ? json(200, { emailVerificationRequired }) : json(404, { error: 'Not found' });
+    if (!emailVerificationRequired && (path === '/auth/confirm' || path === '/auth/verify')) return json(404, { error: 'Not found' });
     if (path === '/auth/me' || path === '/auth/join' || path === '/auth/logout') {
       if ((path === '/auth/me' && method !== 'GET') || (path !== '/auth/me' && method !== 'POST')) return json(404, { error: 'Not found' });
       const user = await identity(event);
@@ -82,7 +91,14 @@ export async function handler(event: APIGatewayProxyEventV2) {
         await db.send(new DeleteCommand({ TableName: tableName, Key: key('SESSION', digest(token)) }));
         return json(200, { ok: true });
       }
-      if (path === '/auth/me') return json(200, { email: user.email, member: await isMember(user) });
+      if (path === '/auth/me') {
+        const member = await isMember(user);
+        return json(200, {
+          email: user.email,
+          member,
+          ...(!member && process.env.AUTO_FILL_DEPLOYMENT_KEY === 'true' ? { deploymentKey: process.env.ADMIN_KEY } : {}),
+        });
+      }
       if (!await rateLimit(`join:${user.id}`, 10) || !await rateLimit(`ip:${event.requestContext.http.sourceIp}`, 100)) return json(429, { error: 'Too many attempts' });
       const supplied = parseBody(event)?.key;
       const expected = process.env.ADMIN_KEY;
@@ -95,27 +111,34 @@ export async function handler(event: APIGatewayProxyEventV2) {
     const email = emailValue(body?.email);
     if (!body || !email) return json(400, { error: 'Invalid request' });
     const local = process.env.LOCAL_AUTH === '1';
-    if (local && (!process.env.SMTP_URL || !process.env.SMTP_FROM)) return json(503, { error: 'Email delivery is not configured' });
+    if (local && emailVerificationRequired && (!process.env.SMTP_URL || !process.env.SMTP_FROM)) return json(503, { error: 'Email delivery is not configured' });
     const clientId = process.env.USER_POOL_CLIENT_ID;
     if (!local && (!clientId || !process.env.USER_POOL_ID)) return json(503, { error: 'Authentication is not configured' });
     if (!await rateLimit(`ip:${event.requestContext.http.sourceIp}`, 100) || !await rateLimit(`${path}:${email}`, 10)) return json(429, { error: 'Too many attempts' });
-    const userKey = key('USER', digest(email));
+    const emailDigest = digest(email);
+    const userKey = key('USER', emailDigest);
     if (path === '/auth/register') {
       const password = body.password;
       if (typeof password !== 'string' || password.length < 12 || password.length > 256) return json(400, { error: 'Password must be between 12 and 256 characters' });
       if (!local) {
         await cognito.send(new SignUpCommand({ ClientId: clientId!, Username: email, Password: password, UserAttributes: [{ Name: 'email', Value: email }] }));
+        if (!emailVerificationRequired) await cognito.send(new AdminConfirmSignUpCommand({ UserPoolId: process.env.USER_POOL_ID!, Username: email }));
       } else {
         const salt = random();
-        const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
-        const codeSalt = random();
-        await db.send(new PutCommand({ TableName: tableName, Item: { ...userKey, email, salt, passwordHash: await secretHash(password, salt), codeSalt, codeHash: await secretHash(code, codeSalt), codeExpiresAt: now() + 600, confirmed: false }, ConditionExpression: 'attribute_not_exists(PK)' }));
-        try { await sendCode(email, code); } catch (error) {
-          await db.send(new DeleteCommand({ TableName: tableName, Key: userKey, ConditionExpression: 'codeSalt = :salt AND confirmed = :false', ExpressionAttributeValues: { ':salt': codeSalt, ':false': false } }));
-          throw error;
+        const passwordHash = await secretHash(password, salt);
+        if (emailVerificationRequired) {
+          const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+          const codeSalt = random();
+          await db.send(new PutCommand({ TableName: tableName, Item: { ...userKey, email, salt, passwordHash, codeSalt, codeHash: await secretHash(code, codeSalt), codeExpiresAt: now() + 600, confirmed: false }, ConditionExpression: 'attribute_not_exists(PK)' }));
+          try { await sendCode(email, code); } catch (error) {
+            await db.send(new DeleteCommand({ TableName: tableName, Key: userKey, ConditionExpression: 'codeSalt = :salt AND confirmed = :false', ExpressionAttributeValues: { ':salt': codeSalt, ':false': false } }));
+            throw error;
+          }
+        } else {
+          await db.send(new PutCommand({ TableName: tableName, Item: { ...userKey, email, salt, passwordHash, confirmed: true }, ConditionExpression: 'attribute_not_exists(PK)' }));
         }
       }
-      return json(200, { ok: true });
+      return json(200, { ok: true, emailVerificationRequired });
     }
     if (path === '/auth/confirm') {
       const code = codeValue(body.code);
@@ -135,7 +158,8 @@ export async function handler(event: APIGatewayProxyEventV2) {
       if (local) {
         const user = (await db.send(new GetCommand({ TableName: tableName, Key: userKey, ConsistentRead: true }))).Item;
         const hash = await secretHash(password, user?.salt ?? 'missing-user-salt');
-        if (!user?.confirmed || !equal(hash, user.passwordHash)) return json(401, { error: 'Invalid credentials' });
+        if (!user || (emailVerificationRequired && !user.confirmed) || !equal(hash, user.passwordHash)) return json(401, { error: 'Invalid credentials' });
+        if (!emailVerificationRequired) return json(200, { token: await putSession(`local#${emailDigest}`, email) });
         const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
         const salt = random();
         await db.send(new PutCommand({ TableName: tableName, Item: { ...key('CHALLENGE', digest(challenge)), email, salt, codeHash: await secretHash(code, salt), expiresAt: now() + 600 }, ConditionExpression: 'attribute_not_exists(PK)' }));
@@ -143,6 +167,11 @@ export async function handler(event: APIGatewayProxyEventV2) {
       } else {
         const input = { AuthFlow: 'USER_PASSWORD_AUTH' as const, ClientId: clientId!, AuthParameters: { USERNAME: email, PASSWORD: password } };
         let result = await cognito.send(new InitiateAuthCommand(input));
+        if (!emailVerificationRequired) {
+          if (!result.AuthenticationResult?.IdToken) return json(401, { error: 'Invalid credentials' });
+          const userId = await cognitoUserId(result.AuthenticationResult.IdToken, email, false);
+          return userId ? json(200, { token: await putSession(userId, email) }) : json(401, { error: 'Unauthorized' });
+        }
         if (result.AuthenticationResult) result = await cognito.send(new InitiateAuthCommand(input));
         if (result.ChallengeName !== 'EMAIL_OTP' || !result.Session) return json(401, { error: 'Email verification is required' });
         await db.send(new PutCommand({ TableName: tableName, Item: { ...key('CHALLENGE', digest(challenge)), email, cognitoSession: result.Session, expiresAt: now() + 180 }, ConditionExpression: 'attribute_not_exists(PK)' }));
@@ -162,10 +191,9 @@ export async function handler(event: APIGatewayProxyEventV2) {
       if (typeof pending.cognitoSession !== 'string') return json(400, { error: 'Invalid challenge' });
       const result = await cognito.send(new RespondToAuthChallengeCommand({ ClientId: clientId!, ChallengeName: 'EMAIL_OTP', Session: pending.cognitoSession, ChallengeResponses: { USERNAME: email, EMAIL_OTP_CODE: code } }));
       if (!result.AuthenticationResult?.IdToken) return json(401, { error: 'Email verification is required' });
-      const verifier = CognitoJwtVerifier.create({ userPoolId: process.env.USER_POOL_ID!, clientId: clientId!, tokenUse: 'id' });
-      const claims = await verifier.verify(result.AuthenticationResult.IdToken);
-      if (claims.email_verified !== true || typeof claims.email !== 'string' || claims.email.toLowerCase() !== email) return json(401, { error: 'Unauthorized' });
-      userId = `cognito#${claims.sub}`;
+      const verifiedUserId = await cognitoUserId(result.AuthenticationResult.IdToken, email, true);
+      if (!verifiedUserId) return json(401, { error: 'Unauthorized' });
+      userId = verifiedUserId;
     }
     return json(200, { token: await putSession(userId, email) });
   } catch (error) {

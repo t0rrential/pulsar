@@ -151,7 +151,7 @@ try {
       }
       const routeKey = `${request.method} ${url.pathname}`;
       const handler = routes[routeKey as keyof typeof routes] ??
-        (/^\/auth\/(?:register|confirm|login|verify|join|me|logout)$/.test(url.pathname) ? auth :
+        (/^\/auth\/(?:config|register|confirm|login|verify|join|me|logout)$/.test(url.pathname) ? auth :
         /^\/campaigns(?:\/[^/]+(?:\/(?:creatives|fingerprints))?)?$/.test(url.pathname) || url.pathname === '/uploads' || /^\/analytics\/(?:pipeline|queries(?:\/[a-zA-Z0-9-]+)?)$/.test(url.pathname) ? admin : undefined);
       if (!handler) { response.writeHead(404, { 'content-type': 'application/json' }); response.end(JSON.stringify({ error: 'Not found' })); return; }
       const chunks: Buffer[] = [];

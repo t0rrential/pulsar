@@ -9,7 +9,7 @@ const env = { ...process.env, AWS_PROFILE: profile, AWS_REGION: region, AWS_DEFA
 const awsArgs = ['--profile', profile, '--region', region, '--no-cli-pager'];
 
 type StackOutput = { OutputKey: string; OutputValue: string };
-type StackDescription = { Stacks: { Outputs?: StackOutput[] }[] };
+type StackDescription = { Stacks: { Outputs?: StackOutput[]; Parameters?: { ParameterKey: string; ParameterValue?: string }[] }[] };
 
 function run(command: string, args: string[], childEnv: NodeJS.ProcessEnv = env): void {
   execFileSync(command, args, { cwd, env: childEnv, stdio: 'inherit' });
@@ -29,6 +29,11 @@ function main(): void {
   if (!sender || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(sender)) throw new Error('Set SES_SENDER_EMAIL to an address covered by a verified SES identity.');
   const identityArn = process.env.SES_IDENTITY_ARN?.trim();
   if (!identityArn || !/^arn:[a-z0-9-]+:ses:[a-z0-9-]+:\d{12}:identity\/.+$/.test(identityArn)) throw new Error('Set SES_IDENTITY_ARN to the verified SES identity ARN.');
+  const requireEmailVerification = process.env.REQUIRE_EMAIL_VERIFICATION ?? 'true';
+  if (!['true', 'false'].includes(requireEmailVerification)) throw new Error('REQUIRE_EMAIL_VERIFICATION must be true or false.');
+  let siteDomainName = process.env.SITE_DOMAIN_NAME?.trim();
+  let siteCertificateArn = process.env.SITE_CERTIFICATE_ARN?.trim();
+  let autoFillDeploymentKey = process.env.AUTO_FILL_DEPLOYMENT_KEY;
   const identity = aws<{ Account: string; Arn: string }>(['sts', 'get-caller-identity']);
   if (!/^\d{12}$/.test(identity.Account) || !identity.Arn) throw new Error('AWS returned no valid account identity.');
   if (identity.Arn.endsWith(':root')) throw new Error('Root credentials are forbidden. Use a non-root AWS profile.');
@@ -40,6 +45,10 @@ function main(): void {
   if (previous.error) throw previous.error;
   if (previous.status === 0) {
     const description = JSON.parse(previous.stdout) as StackDescription;
+    const parameters = description.Stacks[0]?.Parameters ?? [];
+    siteDomainName ??= parameters.find((parameter) => parameter.ParameterKey === 'SiteDomainName')?.ParameterValue;
+    siteCertificateArn ??= parameters.find((parameter) => parameter.ParameterKey === 'SiteCertificateArn')?.ParameterValue;
+    autoFillDeploymentKey ??= parameters.find((parameter) => parameter.ParameterKey === 'AutoFillDeploymentKey')?.ParameterValue;
     if (!description.Stacks[0]?.Outputs?.some((output) => output.OutputKey === 'SiteUrl')) {
       throw new Error('Existing stack has no SiteUrl; inspect its status before updating.');
     }
@@ -56,6 +65,11 @@ function main(): void {
   } else if (!/\(ValidationError\)[\s\S]*does not exist/.test(previous.stderr)) {
     throw new Error(`Unable to inspect existing stack: ${previous.stderr || previous.status}`);
   }
+  if (Boolean(siteDomainName) !== Boolean(siteCertificateArn)) {
+    throw new Error('Set SITE_DOMAIN_NAME and SITE_CERTIFICATE_ARN together, or leave both unset.');
+  }
+  autoFillDeploymentKey ??= 'false';
+  if (!['true', 'false'].includes(autoFillDeploymentKey)) throw new Error('AUTO_FILL_DEPLOYMENT_KEY must be true or false.');
 
   run('npm', ['run', 'build']);
   run('npm', ['run', 'typecheck']);
@@ -79,6 +93,9 @@ function main(): void {
     '--tags', 'Project=pulsar-showcase', '--parameter-overrides',
     `DeploymentPermissionsBoundary=${boundary}`, `BudgetEmail=${email}`, `AdminKey=${adminKey}`,
     `SesSenderEmail=${sender}`, `SesIdentityArn=${identityArn}`,
+    `RequireEmailVerification=${requireEmailVerification}`,
+    `AutoFillDeploymentKey=${autoFillDeploymentKey}`,
+    `SiteDomainName=${siteDomainName ?? ''}`, `SiteCertificateArn=${siteCertificateArn ?? ''}`,
   ]);
 
   const description = aws<StackDescription>(['cloudformation', 'describe-stacks', '--stack-name', stack]);
@@ -86,7 +103,7 @@ function main(): void {
   for (const key of ['ApiUrl', 'TableName', 'SiteBucketName', 'SiteUrl', 'UserPoolId', 'UserPoolClientId']) {
     if (!outputs[key]) throw new Error(`Stack output ${key} is missing.`);
   }
-  run('npm', ['run', 'build', '--workspace=@pulsar/demo'], { ...env, VITE_API_URL: outputs.ApiUrl });
+  run('npm', ['run', 'build', '--workspace=@pulsar/demo'], { ...env, VITE_API_URL: '' });
   const seedEnv: NodeJS.ProcessEnv = { ...env, TABLE_NAME: outputs.TableName, CREATIVE_BASE_URL: `${outputs.SiteUrl.replace(/\/+$/, '')}/creatives` };
   delete seedEnv.DYNAMODB_ENDPOINT;
   // Keep the SDK on the same named profile as the CLI, not ambient access keys.
